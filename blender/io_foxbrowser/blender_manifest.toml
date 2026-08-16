@@ -1,0 +1,21 @@
+schema_version = "1.0.0"
+
+id = "io_foxbrowser"
+version = "1.3.0"
+name = "FoxBrowser Import (MGSV / Ground Zeroes)"
+tagline = "Import FoxBrowser FMDL exports and bulk animation libraries"
+maintainer = "minmaxmaxminnning"
+type = "add-on"
+
+website = "https://www.nexusmods.com/metalgearsolidvtpp/mods/2531"
+
+tags = ["Import-Export", "Pipeline"]
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+[permissions]
+files = "Read model, rig JSON and DDS texture files from the chosen export folders"
