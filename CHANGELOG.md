@@ -3,6 +3,350 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.12.1] - 2026-08-17
+
+### Fixed
+
+- `--grid` on an archive with no locomotion grids selected nothing and wrote an
+  empty folder, which looks exactly like an export that ran. It now says so and
+  points at `--locomotion` or dropping the flag.
+
+### Added
+
+- `scripts/export-locomotion-rootmotion.bat`: the whole player export, both
+  characters and both games, with root motion on. Runs the compatibility checks
+  first and stops for you to read them, because an export against a model that
+  matches nothing produces empty folders rather than an error.
+
+## [1.12.0] - 2026-08-17
+
+### Fixed
+
+- **`--for-mtar` gave a wrong answer for the archives it was written for.** It
+  ranked models by intersecting an archive's hash table with a skeleton's bone
+  hashes — but a v2 archive's table lists **rig units**, not bones, so for
+  `player2_resident` and `mgoplayer_resident` every model scored zero and the
+  ranking was meaningless. Silently, since an empty result looks like "nothing
+  fits" rather than "wrong question asked". When the cheap comparison finds
+  nothing, it now resolves candidates through their own rigs, the way the game
+  does. That is slower, so it is bounded — and the bound is printed rather than
+  quietly truncating.
+
+### Added
+
+- **`--root-motion`**, and a **Root motion** toggle in the preview. Clips are
+  baked on the spot by default, which is right for an Action library but means a
+  character animated from them never leaves the origin. FoxBrowser's own bake
+  hardcodes translation off, so this is a parallel bake with that one argument
+  flipped; the Euler extraction matches it exactly, so the only difference is the
+  travel. The preview toggle re-solves live.
+- **Locomotion grids, detected rather than guessed.** `--list-grids <set>` finds
+  complete movement sets by structure — verb, phase, angle, lead foot — and
+  `--grid` exports only clips that belong to one. On `player2_resident` this
+  finds four complete 8-direction grids (walk and run, standing and crouched, 64
+  clips each) and claims 402 of 1,253 clips rather than sweeping the archive.
+  `--locomotion` remains as the fuzzy name-fragment filter; `--grid` is the exact
+  one, and reports any grid that comes back incomplete instead of pretending.
+- `tests/grid`: grid detection against a synthesised complete family and, if you
+  pass a clip list, a real archive. Asserts structure — eight directions, stops
+  matching starts, every turn carrying a lead foot — and that non-locomotion
+  clips are *not* swept in, which is the failure a fragment filter cannot detect.
+
+## [1.11.0] - 2026-08-17
+
+### Fixed
+
+- **The newest copy of a file now wins.** The Phantom Pain ships the same file in
+  more than one archive and loads the later one:
+  `player2_resident.mtar` is in `master\chunk0.dat` with 1,253 clips and again in
+  `master\0\00.dat` with **1,285**. Whichever copy the scan happened to reach
+  first was being used, so an export could silently be of a version of the game
+  nobody is playing. Copies are now ranked by patch layer, and when they disagree
+  the log says which was chosen and what it beat.
+
+### Changed
+
+- **The chosen rig is remembered.** Finding one walks every archive and parses
+  every `.frig` inside — thirteen archives and tens of gigabytes on Phantom Pain,
+  repeated on every run before anything you asked for. `--why-mtar`, which prints
+  six lines, appeared to hang for minutes with nothing on screen. Rigs are now
+  cached beside the archive index, keyed the same way, and the search says what
+  it is doing while it runs.
+- `--list-sets` calls its third column **tracks**, not bones. A v2 archive's table
+  lists the rig units its clips address, not skeleton bones — labelling 18 rig
+  units as "18 bones" invites exactly the wrong conclusion about a 120-bone
+  character.
+
+## [1.10.0] - 2026-08-17
+
+### Added
+
+- **Clips are listed with their packing index and resolved path.** The index is
+  the clip's position in the archive, which is the key the community's
+  hand-written GANI description lists are numbered by — so those lists and this
+  tool's output line up row for row, and the abbreviated names stop needing to be
+  guessed at. `--list-clips` prints `#`, name and path; the browser gains the same
+  two columns.
+
+  The path is whatever the game's own hash dictionary resolves for that clip. It
+  is not an interpretation of the name — it is the name, spelled out, from the
+  game's data.
+
+## [1.9.1] - 2026-08-17
+
+### Fixed
+
+- **The browser's search boxes ate most of the alphabet.** The window takes
+  single-letter shortcuts — s for skeleton, m for mesh, r to re-frame, space to
+  pause — and `KeyPreview` routes every keystroke through them first, so typing
+  any of those into a search box triggered the shortcut instead of the letter.
+  Typing now wins wherever text can be typed.
+- **Dark mode broke on the new lists.** Owner-drawing the column header while
+  leaving rows to `DrawDefault` is unreliable in Details view — rows come back
+  unpainted, checkboxes go missing. The header is now handed to the shell's own
+  dark theme, the same one Explorer uses, and nothing is drawn by hand. Context
+  menus get a proper dark renderer rather than system grey.
+
+### Changed
+
+- The browser opens on **the sets ticked in the main window**, with a tick box to
+  widen it to everything in the game. A ticked set is a decision already made;
+  the escape hatch stays one click away because the automatic fit judgement is
+  the thing that cannot be trusted.
+
+## [1.9.0] - 2026-08-17
+
+### Added
+
+- **The animation set list takes a selection.** Shift or Ctrl picks several rows,
+  and ticking any one of them ticks the whole selection — twenty sets is one
+  click rather than twenty. Ctrl+A selects everything shown.
+- **Right-click menu** on that list: tick or untick the selection, tick or untick
+  everything currently shown, invert, select all. The counts are in the menu
+  labels, and "shown" means what the search box and *Show every set* are letting
+  through rather than silently meaning everything.
+
+### Changed
+
+- That list is now a table — set, clips, bones, verdict in their own columns —
+  instead of one run-on line per row. WinForms' `CheckedListBox` cannot do any of
+  the above: it supports exactly one selected row and throws if asked for more,
+  so the control had to change for the feature to exist at all.
+- Dark mode reaches `ListView` and context menus, which it previously did not.
+  The new lists would otherwise have come out bright white with a system-drawn
+  header, which reads as a rendering fault rather than a style.
+
+## [1.8.0] - 2026-08-17
+
+### Fixed
+
+- **Player animations played nothing, and the fault was 1.4.0's rig fix.**
+  Choosing a rig by how much of the *model* it covered looked reasonable and was
+  wrong in both directions. A `.frig` describes only the bones it **drives** —
+  help bones and IK chains — never the whole skeleton. The real rig for the
+  120-bone player model `skl0_main0_def_f` names 53 bones: 44% coverage, under
+  any floor worth having. So the correct rig was rejected, the character was left
+  with no rig at all, and because the player's archives are rig-driven — their
+  clip tracks addressed by rig channel rather than by bone name — nothing moved.
+  `player2_resident` reported 0 matching bones on a character FoxBrowser animates
+  without complaint.
+
+  The test that works is **precision**: what share of the *rig's* bones this
+  skeleton has. The player's own rig scores 100% while covering 44% of the model.
+  The foreign 144-bone rig that caused the original stretching scores 65% while
+  covering 100%. One number separates both failures; coverage separates neither.
+  Among believable rigs, the one driving the most of the skeleton wins.
+
+  A plausible rig is also never discarded now. 1.4.0 preferred no rig to a
+  doubtful one, on the grounds that a wrong rig tears a character apart while a
+  missing one only looks stiff. That was true of the case in front of me and
+  false in general: for rig-driven archives a missing rig means no animation at
+  all. The closest rig is used and the log says plainly how well it fits.
+
+- **The browser's Matched column read zero for rig-driven archives.** It compared
+  bone hashes directly, which cannot work when an archive's tracks are indexed by
+  rig channel. It now asks the same question the player does.
+
+### Added
+
+- `tests/rig`: the rig-choice rule against both real failures — the 144-bone rig
+  that stretched a soldier and the 53-bone rig that was wrongly rejected for a
+  120-bone player. Neither needs game files; the numbers were measured from real
+  rips, and a rule that satisfies one and not the other fails.
+
+## [1.7.0] - 2026-08-17
+
+### Changed
+
+- **The animation browser no longer hides anything, and no longer asks you to
+  find sets first.** *Browse & preview animations…* opens straight onto every
+  `.mtar` in the game — searchable, with clip count, bone count, matched bones
+  and the archive path — and the clips inside whichever one you select. Pick a
+  character from the dropdown at the top and switch between them without
+  reopening.
+
+  The compatibility filter is gone from this path entirely. Matching an archive
+  to a skeleton automatically is not reliable: an `.mtar` only carries a bone
+  table when its header sets `HAS_SKEL_LIST`, and where it does not, both this
+  tool and FoxBrowser's own dialog will report that nothing fits a character
+  whose animations play perfectly the moment you name the archive by hand. A
+  filter built on that guess makes the thing you are looking for vanish with no
+  explanation. The match count is now a **column**, never a gate — a hint you can
+  settle in one second by pressing play.
+
+  Reported by a user who saw exactly 404 animations offered for every Phantom
+  Pain character, while FoxBrowser played `player2_resident.mtar` on all of them
+  without complaint.
+
+### Added
+
+- **The version is on screen** — in the window title, the browser title and the
+  first line of the log. "Is the fix in the copy I am running?" should not
+  require diffing binaries.
+
+## [1.6.0] - 2026-08-17
+
+### Fixed
+
+- **The animation-set list hid what it could not use.** A set was dropped from
+  the window silently if it fell under the matching-bone threshold, and equally
+  silently if it could not be read or decoded at all. Three different problems,
+  one indistinguishable symptom: the archive you were looking for is simply not
+  there, with nothing to say whether it was missing, broken, or merely judged a
+  poor fit.
+
+  Every set is now kept and labelled — `does not fit (3 bones matched)`, or
+  `could not be read (...)` — with a **Show every set** tick and a search box
+  beside the character list. Ticking a set by hand overrides the fit check on
+  export, because ticking it is a decision; "everything that fits" still filters.
+  A forced set that does not fit says so in the log, and says what to change.
+
+### Added
+
+- **`--why-mtar <set>`**: why one archive is or is not offered for a character —
+  whether it is indexed, whether it reads, whether it carries a skeleton list,
+  and how many bones it matches against the threshold. "It is not in the list"
+  has four causes needing four different responses; this says which one it is.
+- Ticks in the set list survive filtering, so narrowing the view cannot quietly
+  discard a choice that scrolled out of sight.
+
+## [1.5.0] - 2026-08-17
+
+### Fixed
+
+- **Metal Gear Online's archives were never read.** The Phantom Pain profile
+  swept `master\` and the game root, but MGSV installs a second tree at `mgo\`,
+  and that is the only place the male and female avatar models and their motions
+  live. Everything under it was invisible to the index — not mis-ranked, not
+  filtered out, simply never looked at. `mgo\` is now swept alongside `master\`.
+  Adding it changes the archive fingerprint, so Phantom Pain re-indexes once on
+  the next run; the scan is resumable, so an interrupted one picks up.
+
+### Added
+
+- **Animation-first commands**, for when you know which animations you want and
+  are looking for a model to hang them on. Fox Engine binds animation to
+  *skeletons*, so that question has a real answer.
+
+  - `--list-sets [text]` — every animation archive in the game with its clip and
+    bone counts, no character needed. Also reports whether the archive carries a
+    skeleton list, which is why FoxBrowser's own compatibility check comes up
+    empty on some of them.
+  - `--list-clips <set>` — the clip names inside one archive.
+  - `--for-mtar <set>` — the models that can play an archive, ranked by how much
+    of the *animation's* skeleton each one has. This is how you find a base model
+    for a whole locomotion set.
+  - `--model-filter <text>` and `--all-models` to widen or narrow that search.
+
+- `--filter-any a,b,c` — keep clips matching any of several fragments, rather
+  than one substring.
+- `--locomotion` — shorthand for the standard walk / run / crouch / turn / idle
+  name fragments. A starting point, not a truth: check it with `--list-clips`
+  and extend it, since nothing in the game files marks a clip as locomotion.
+
+## [1.4.0] - 2026-08-16
+
+### Fixed
+
+- **The wrong rig was chosen, and characters came out stretched.** A candidate
+  `.frig` was scored as `min(SegmentCount, boneCount)` — its own size, with no
+  test that it had anything to do with the character — and the first one to clear
+  the model's bone count won. Ground Zeroes has few enough rigs that this was
+  usually right by accident. The Phantom Pain has thousands, so a foreign rig
+  would win: a 144-bone rig for a 94-bone soldier, in the case that turned this
+  up. Bone drives resolve by name hash and every soldier shares the standard
+  `SKL_` names, so the wrong rig's units and segments were then applied to
+  whichever bones the two skeletons had in common. The visible result was the
+  neck and the help bones sliding out of the body with the mesh stretching after
+  them, on nearly every clip.
+
+  Rigs are now scored by real overlap with the skeleton — matched bones against
+  the union of both bone sets, so a rig that merely *contains* the character's
+  bones no longer beats the one that *is* the character's rig — with a rig named
+  or filed like the model preferred as a tie-break. Below a plausibility floor
+  nothing is returned at all: an unsolved help bone looks slightly stiff, while a
+  wrong rig tears the character apart and does it silently.
+
+  On a run that matters, the log now says how many of the skeleton's bones the
+  chosen rig actually covers, and warns when the best available is a poor fit.
+
+### Added
+
+- **A preview window.** Pick a character, press *Preview…*, and step down the
+  clip list with the arrow keys while each one loops. Orbit, pan and zoom with
+  the mouse; matcap and skeleton toggle independently; the transport scrubs and
+  plays at quarter to double speed.
+
+  It renders through a software rasteriser — no OpenGL, no native libraries, no
+  extra files beside the executable, and it works over Remote Desktop. The pose
+  comes from the game's own animation solve rather than from anything an exporter
+  wrote, so a clip that looks right here and wrong in Blender means the export is
+  at fault, and one that looks wrong here does not fit the character.
+
+- **`--list-rigs`**: the rigs that fit a character, best first, with the matched
+  bone count and overlap for each. The top row is the rig that will be used.
+- `tests/preview`: renders known shapes and checks the pixels — that near
+  geometry occludes far geometry, that shading near a vertex matches that
+  vertex's normal, that skinning moves the weighted vertices and only those, and
+  that a triangle straddling the camera plane does not smear across the frame.
+
+### Changed
+
+- Every caller of FoxBrowser's animation solve now holds one lock. It returns
+  intermediate results through static fields, so two threads in it at once do not
+  throw — they hand each other the wrong skeleton. With only the export loop
+  calling it this was theoretical; playing a clip while an export runs makes it
+  real.
+
+## [1.3.1] - 2026-08-16
+
+### Fixed
+
+- **Blender add-on: clips did nothing on Blender 4.4 and later.** The character
+  stayed in its rest pose — a T-pose — while the Action Editor showed a full set
+  of keyframes. Blender 4.4 gave Actions *slots*, and F-curves only animate once
+  a slot is bound to the object. The FBX importer names a clip's slot after the
+  temporary armature it builds for the clip file, which the add-on then throws
+  away, so assigning the leftover Action to the model's armature bound nothing
+  and nothing moved. Slots are now renamed after the armature they belong to at
+  import time, which makes Blender's own name-based binding work everywhere —
+  this add-on's panel, the Action Editor dropdown, the NLA, a linked file — not
+  only in the one code path the add-on controls.
+
+  Blender 4.2 and 4.3 were never affected. Scenes already imported with an older
+  version of the add-on are repairable in place: select the armature and use
+  **Animation Library ▸ Repair Slots**.
+
+### Added
+
+- Blender add-on: **Repair Slots** in the Animation Library panel, and a warning
+  box that appears when an Action is assigned but not bound, which was
+  previously a silent failure with no clue in the interface.
+- `tests/test_slots.py`: imports a model and a clip, assigns it, and evaluates
+  the deformed mesh at two frames. Every cheaper check — F-curves exist, bone
+  names match, modifiers and weights are present — passed while the bug was
+  live; only comparing evaluated vertices catches it.
+
 ## [1.3.0] - 2026-08-16
 
 ### Added

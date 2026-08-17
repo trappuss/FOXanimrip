@@ -26,7 +26,9 @@ imported as an Action.*
 
 - [What you need](#what-you-need)
 - [Quick start](#quick-start)
+- [Preview](#look-before-you-export)
 - [Command line](#command-line)
+- [Finding a base model for an animation set](docs/finding-locomotion.md)
 - [How it works](#how-it-works)
 - [Is it independent of FoxBrowser?](#is-it-independent-of-foxbrowser)
 - [Portability](#portability)
@@ -79,7 +81,7 @@ The window walks through four steps:
                       2 selected:  sna2_main0_def, sna6_main0_def
 
 3.  Which animations  ( ) Everything that fits each character
-                      (•) Only the sets I tick below   [Find animation sets]
+                      (•) Only the sets I tick below   [Find animation sets] [Preview…]
                       ┌──────────────────────────────────────────┐
                       │ ☑ TppGzPlayer_layers  – 2406 clips, fits 2 │
                       │ ☑ SoldierGz_layers    – 1160 clips, fits 2 │
@@ -99,6 +101,45 @@ interrupted scan resumes rather than starting again. Dark theme by default; ther
 System option next to the other settings.
 
 You never have to know what an `.fmdl` or an `.mtar` is.
+
+**Look before you export.** *Browse & preview animations…* opens every animation
+archive in the game — no set-finding step, no compatibility filter — and plays
+whatever you click:
+
+```
+Character [ skl0_main0_def_f  (94 bones) ▾ ]
+┌ animation set ────── clips  bones  matched ┐┌─────────────────────────────┐
+│ player2_resident       846    182       94 ││                             │
+│ mgoplayer_resident     412    178       92 ││      (the character,        │
+│ SoldierGz_layers      1160     96       94 ││       playing the clip)     │
+└────────────────────────────────────────────┘│                             │
+┌ clip ─────────────── frames  bones ────────┐│                             │
+│ plyr_s_wal_f_lp         120      94        ││                             │
+│ plyr_s_run_f_lp          64      94        ││                             │
+└────────────────────────────────────────────┘└─────────────────────────────┘
+ ☑ Mesh  ☐ Skeleton  ☑ Ground   Speed [1x ▾]
+ [Pause] ──────●─────────────   frame 41/192   94 bones   1.4 ms
+```
+
+Arrow keys walk the clip list, **Space** pauses, **S** shows the skeleton, **M**
+hides the mesh, **R** or double-click re-frames. Left drag orbits, right drag
+pans, the wheel zooms.
+
+**Nothing is filtered out.** The *matched* column says how many of the
+character's bones an archive drives, and that is all it does — it never hides a
+row. Automatic matching is not trustworthy enough to hide things on: an `.mtar`
+only carries a bone table when its header sets `HAS_SKEL_LIST`, and where it does
+not, both this tool and FoxBrowser's own dialog will insist nothing fits a
+character whose animations play fine when you name the archive yourself. A low
+number is a hint; pressing play settles it.
+
+The pose comes from the game's own animation solve, not from anything the
+exporter wrote. That makes the window a straight answer to "whose fault is
+this?": a clip that looks right here and wrong in Blender means the export is at
+fault, and one that looks wrong here does not fit this character.
+
+It draws with a software rasteriser, so there is no OpenGL requirement, no
+native library beside the executable, and it works over Remote Desktop.
 
 **Several characters at once:** ctrl-click or shift-click in the character list.
 Each one gets its own rig, its own compatibility check and its own output
@@ -157,6 +198,13 @@ foxanimrip --game gz --character sna2_main0_def --all --out C:\rips\anims
 | `--mtar <file\|name>` | One animation archive, repeatable. |
 | `--all` | Every animation archive in the game that fits the model. |
 | `--list-mtars` | Print the compatible sets with clip counts, then exit. |
+| `--list-rigs` | Print the rigs that fit this character, best first, then exit. The top row is the one that will be used — check this if clips come out distorted. |
+| `--list-sets [text]` | Every animation archive in the game, with clip and bone counts. No character needed. |
+| `--list-clips <set>` | The clip names inside one archive. |
+| `--for-mtar <set>` | The models that can play an archive, best first — how you find a base model for a whole animation set. See [the walkthrough](docs/finding-locomotion.md). |
+| `--model-filter <text>` / `--all-models` | Narrow or widen the `--for-mtar` search. |
+| `--filter-any a,b,c` | Keep clips whose name contains any of these. |
+| `--locomotion` | Shorthand for the standard walk / run / crouch / turn / idle name fragments. |
 
 **Output**
 
@@ -332,6 +380,60 @@ re-serialisation with recomputed offsets, property payloads (including the
 compressed vertex arrays) copied byte for byte. The Blender add-on carries the
 same repair for files that came straight out of FoxBrowser.
 
+### The character stays T-posed on Blender 4.4 and later
+
+Blender 4.4 split an Action into *slots*. F-curves no longer address an object
+directly — they address a slot, and something has to bind that slot to the
+object before anything is evaluated at all.
+
+Importing a clip leaves an Action whose slot is named after the throwaway
+armature the FBX importer built for the clip file. Assigning that Action to the
+model's armature binds nothing, because Blender only auto-binds when the names
+line up. The result is the worst kind of failure: the Action Editor shows a full
+set of keyframes, the character stands in its rest pose, and nothing anywhere in
+the interface says why. Every obvious diagnosis is a dead end — the F-curves are
+there, the bone names match, the armature modifier and vertex weights are all
+correct.
+
+The add-on now renames each clip's slot after the armature it belongs to as the
+clip is imported, so Blender's own name-based binding does the right thing
+everywhere: the Animation Library panel, the Action Editor dropdown, the NLA,
+and a file linked into another scene. Scenes imported with an older version are
+repairable in place — select the armature and use **Animation Library ▸ Repair
+Slots**.
+
+### The wrong rig, and a stretched character
+
+A `.frig` used to be scored by its own size — `min(SegmentCount, boneCount)` —
+and the first one large enough to clear the model's bone count was taken. That
+is not a test of whether the rig belongs to the character; it is a test of
+whether the rig is big. Ground Zeroes ships few enough rigs that the answer came
+out right anyway. The Phantom Pain ships thousands, and there a 144-bone rig
+would be handed to a 94-bone soldier.
+
+It does not fail loudly, because bone drives resolve by *name hash* and every
+soldier in the game shares the standard `SKL_` names. So the foreign rig's units
+and segments were applied to whichever bones the two skeletons had in common —
+which meant the neck and the help bones, the only ones the rig actually drives.
+They slid out of the body and the mesh stretched after them, on nearly every
+clip, while the rest of the skeleton looked fine.
+
+Rigs are judged by **precision**: what share of the *rig's* bones this skeleton
+actually has. The first attempt at this fix used coverage — how much of the model
+the rig accounted for — which is wrong, because a `.frig` only ever describes the
+bones it *drives*. The real rig for the 120-bone player model names 53 of them,
+so a coverage floor rejected it, left the character with no rig, and since the
+player's archives are rig-driven, played nothing at all.
+
+Precision separates both failures with one number. The foreign 144-bone rig
+scores 65% while covering the whole soldier; the player's own rig scores 100%
+while covering 44% of the model. Among believable rigs the one driving the most
+of the skeleton wins, and a rig named or filed like the model breaks ties. A
+plausible rig is never discarded — for rig-driven archives, no rig means no
+animation.
+
+`--list-rigs` prints the ranking if you want to see it.
+
 ### Bone names came out as hashes
 
 FoxBrowser's name dictionaries are loaded relative to the *running* executable,
@@ -467,8 +569,21 @@ beside the exe.
 **No animation sets found for a character** — lower *Min. matching bones*.
 Facial rigs match far fewer bones than body rigs.
 
+**The clip has keyframes but the character stays T-posed** — on Blender 4.4+ the
+Action's slot is not bound. Select the armature and click **Repair Slots** in the
+Animation Library panel. Clips imported with add-on 1.3.1 or later bind by
+themselves; this is only needed for scenes built with an earlier version.
+
+**The character is stretched, with the neck or the belt pulled away from the
+body** — the wrong rig was matched. Fixed in 1.4.0; run `--list-rigs <character>`
+to see which rig is being chosen and how well it fits. If the top row's overlap
+is well under 100%, this character's own rig is not in the archives being read —
+check that patch archives are included.
+
 **Animations import but the pose is scrambled** — *Automatic Bone Orientation*
 differs between your model import and your animation import. It must match.
+Scrambled is a different symptom from T-posed: scrambled means the Action *is*
+bound and the local bone frames disagree.
 
 **Blender freezes importing thousands of clips** — that is one FBX import per
 clip and it holds the UI. Use the *Name Contains* filter, or export a subset with

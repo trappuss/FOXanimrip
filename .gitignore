@@ -1,0 +1,19 @@
+# build output
+bin/
+obj/
+dist/
+*.user
+
+# reference assemblies unpacked from the user's FoxBrowser.exe
+refs/
+
+# python
+__pycache__/
+*.pyc
+
+# editors
+.vs/
+.vscode/
+.idea/
+*.swp
+.DS_Store
