@@ -58,6 +58,9 @@ public static class Paths
 
     public static string Assemblies => Sub("assemblies");
     public static string CatalogCache => Sub("catalog");
+
+    /// <summary>Chosen rigs, cached per model: finding one walks every archive.</summary>
+    public static string RigCache => Sub("rigs");
     public static string Settings => Path.Combine(Data, "settings.json");
 
     /// <summary>

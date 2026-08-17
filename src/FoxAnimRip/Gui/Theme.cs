@@ -84,8 +84,85 @@ public static class Theme
         foreach (Control child in control.Controls) Walk(child, dark);
     }
 
+    /// <summary>
+    /// A dark ListView.
+    ///
+    /// The first attempt at this owner-drew the column header and left the rows
+    /// to the system with <c>DrawDefault</c>. That combination is unreliable in
+    /// Details view -- rows come back unpainted or lose their checkboxes -- so
+    /// the header is handed to the shell's own dark theme instead, which is what
+    /// Explorer itself uses. Nothing here is drawn by hand.
+    /// </summary>
+    private static void PaintListView(ListView view, bool dark)
+    {
+        view.OwnerDraw = false;
+        view.BackColor = dark ? Field : SystemColors.Window;
+        view.ForeColor = dark ? Text : SystemColors.WindowText;
+        view.BorderStyle = dark ? BorderStyle.FixedSingle : BorderStyle.Fixed3D;
+
+        void ApplyShellTheme()
+        {
+            try
+            {
+                SetWindowTheme(view.Handle, dark ? "DarkMode_Explorer" : "Explorer", null);
+                // The header is a child window with its own theme.
+                var header = SendMessage(view.Handle, LVM_GETHEADER, IntPtr.Zero, IntPtr.Zero);
+                if (header != IntPtr.Zero)
+                    SetWindowTheme(header, dark ? "DarkMode_ItemsView" : "ItemsView", null);
+            }
+            catch { }
+        }
+
+        if (view.IsHandleCreated) ApplyShellTheme();
+        else view.HandleCreated += (_, _) => ApplyShellTheme();
+    }
+
+    /// <summary>A menu that is not painted in system grey on a dark form.</summary>
+    private sealed class DarkMenuColours : ProfessionalColorTable
+    {
+        public override Color ToolStripDropDownBackground => Surface;
+        public override Color MenuItemSelected => Color.FromArgb(60, 63, 70);
+        public override Color MenuItemSelectedGradientBegin => Color.FromArgb(60, 63, 70);
+        public override Color MenuItemSelectedGradientEnd => Color.FromArgb(60, 63, 70);
+        public override Color MenuItemBorder => Border;
+        public override Color MenuBorder => Border;
+        public override Color ImageMarginGradientBegin => Surface;
+        public override Color ImageMarginGradientMiddle => Surface;
+        public override Color ImageMarginGradientEnd => Surface;
+        public override Color SeparatorDark => Border;
+        public override Color SeparatorLight => Border;
+    }
+
+    private static readonly ToolStripProfessionalRenderer DarkMenuRenderer =
+        new(new DarkMenuColours()) { RoundedEdges = false };
+
+    private static void PaintMenu(ToolStripDropDown menu, bool dark)
+    {
+        menu.RenderMode = ToolStripRenderMode.Professional;
+        menu.Renderer = dark ? DarkMenuRenderer : new ToolStripProfessionalRenderer();
+        menu.BackColor = dark ? Surface : SystemColors.Control;
+        menu.ForeColor = dark ? Text : SystemColors.ControlText;
+        foreach (ToolStripItem item in menu.Items)
+        {
+            item.BackColor = dark ? Surface : SystemColors.Control;
+            item.ForeColor = dark ? Text : SystemColors.ControlText;
+        }
+    }
+
+    private const int LVM_GETHEADER = 0x1000 + 31;
+
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+    private static extern int SetWindowTheme(IntPtr window, string app, string idList);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr window, int message,
+                                             IntPtr wParam, IntPtr lParam);
+
     private static void Paint(Control control, bool dark)
     {
+        // A context menu is not in the control tree, so the walk never reaches it.
+        if (control.ContextMenuStrip is { } menu) PaintMenu(menu, dark);
+
         switch (control)
         {
             case TextBox box:
@@ -98,6 +175,10 @@ public static class Theme
                 list.BackColor = dark ? Field : SystemColors.Window;
                 list.ForeColor = dark ? Text : SystemColors.WindowText;
                 list.BorderStyle = dark ? BorderStyle.FixedSingle : BorderStyle.Fixed3D;
+                return;
+
+            case ListView view:
+                PaintListView(view, dark);
                 return;
 
             case ComboBox combo:

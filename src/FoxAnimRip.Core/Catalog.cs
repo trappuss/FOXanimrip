@@ -25,6 +25,43 @@ public sealed class CatalogEntry
     [JsonIgnore]
     public string Stem => System.IO.Path.GetFileNameWithoutExtension(Name);
 
+    /// <summary>
+    /// Which patch layer this copy came from. Higher wins.
+    ///
+    /// The Phantom Pain ships a file more than once and the later copy is the
+    /// one the game loads: <c>player2_resident.mtar</c> exists in
+    /// <c>master\chunk0.dat</c> with 1,253 clips and again in
+    /// <c>master\0\00.dat</c> with 1,285. Taking whichever copy the scan reached
+    /// first silently exports a version of the game nobody is playing.
+    /// </summary>
+    [JsonIgnore]
+    public int Layer => LayerOf(Archive);
+
+    internal static int LayerOf(string archivePath)
+    {
+        if (string.IsNullOrEmpty(archivePath)) return 0;
+        var parts = archivePath.Replace('\\', '/')
+                               .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        // Everything after the named data folder decides the layer: files sitting
+        // directly in it are the base game, a numbered folder is a patch, and a
+        // named folder inside that (MGSVTUPDATEV0110) is newer still.
+        for (var i = 0; i < parts.Length - 1; i++)
+        {
+            if (!parts[i].Equals("master", StringComparison.OrdinalIgnoreCase)
+                && !parts[i].Equals("mgo", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var below = parts.Length - 1 - i - 1;      // folders between it and the file
+            if (below <= 0) return 0;                  // master\chunk0.dat
+            var rank = 0;
+            if (int.TryParse(parts[i + 1], out var numbered)) rank = 10 + numbered;
+            else rank = 10;
+            if (below > 1) rank += 10;                 // master\0\SOMEUPDATE\x.dat
+            return rank;
+        }
+        return 0;
+    }
+
     public override string ToString() => Name;
 }
 

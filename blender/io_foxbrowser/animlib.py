@@ -20,7 +20,7 @@ import os
 
 import bpy
 
-from . import discovery, importer
+from . import discovery, importer, slots
 
 CLIP_EXTENSIONS = (".fbx",)
 
@@ -287,6 +287,10 @@ def import_folder(context, armature_obj, directory, opts, report):
                 name = take_name_of(action, stem) if len(actions) > 1 else stem
                 action.name = (prefix + name) if prefix else name
                 action.use_fake_user = opts.fake_user
+                # Blender 4.4+: the slot still carries the name of the throwaway
+                # armature the clip file created. Point it at the real one, or
+                # assigning the action later animates nothing at all.
+                slots.retarget(action, armature_obj)
 
                 meta = index_info.get(name) if index_info else info
                 action["fox_clip"] = name
@@ -332,7 +336,7 @@ def import_folder(context, armature_obj, directory, opts, report):
     if opts.push_to_nla and imported:
         _push_to_nla(armature_obj, imported, report)
     elif imported:
-        armature_obj.animation_data.action = imported[0]
+        slots.bind(armature_obj.animation_data, imported[0], armature_obj)
 
     return len(imported), skipped, imported
 
@@ -347,6 +351,7 @@ def _push_to_nla(armature_obj, actions, report):
             start = int(round(action.frame_range[0]))
             strip = track.strips.new(action.name, start, action)
             strip.name = action.name
+            slots.bind_strip(strip, action, armature_obj)
             track.mute = True
         except Exception as exc:
             report.warn("could not stash %s in the NLA: %s" % (action.name, exc))

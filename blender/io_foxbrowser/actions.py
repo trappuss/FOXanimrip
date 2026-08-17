@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import bpy
 
+from . import slots
+
 
 def clip_actions():
     """Every Action that came from a FoxBrowser clip."""
@@ -114,7 +116,16 @@ class FOXB_OT_action_assign(bpy.types.Operator):
         action = _active_action(context)
         if armature.animation_data is None:
             armature.animation_data_create()
-        armature.animation_data.action = action
+
+        # On 4.4+ an Action only animates once its slot is bound. Rename the
+        # slot after this armature first so the binding sticks for every other
+        # route into the Action too -- the Action Editor, the NLA, a linked file.
+        slots.retarget(action, armature)
+        bound = slots.bind(armature.animation_data, action, armature)
+        if slots.HAS_SLOTS and bound is None:
+            self.report({'WARNING'},
+                        "%s has no slot for this armature; it will not play"
+                        % action.name)
 
         start, end = action.frame_range
         context.scene.frame_start = int(round(start))
@@ -140,10 +151,13 @@ class FOXB_OT_action_stash(bpy.types.Operator):
         if armature.animation_data is None:
             armature.animation_data_create()
         anim = armature.animation_data
+        slots.retarget(action, armature)
         try:
             track = anim.nla_tracks.new()
             track.name = action.name
-            track.strips.new(action.name, int(round(action.frame_range[0])), action)
+            strip = track.strips.new(action.name,
+                                     int(round(action.frame_range[0])), action)
+            slots.bind_strip(strip, action, armature)
             track.mute = True
         except Exception as exc:
             self.report({'ERROR'}, "Could not stash: %s" % exc)
@@ -201,6 +215,47 @@ class FOXB_OT_action_purge(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class FOXB_OT_action_rebind(bpy.types.Operator):
+    """Point every clip Action's slot at the selected armature
+
+    Blender 4.4 and later will not play an Action whose slot belongs to a
+    different object -- the keyframes are there, the character does not move.
+    Clips imported before this add-on learned about slots need this once
+    """
+    bl_idname = "foxbrowser.action_rebind"
+    bl_label = "Repair Slots"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    all_actions: bpy.props.BoolProperty(
+        name="Every Action",
+        description="Repair all Actions, not only imported clips",
+        default=False)
+
+    @classmethod
+    def poll(cls, context):
+        return _target_armature(context) is not None
+
+    def execute(self, context):
+        armature = _target_armature(context)
+        if not slots.HAS_SLOTS:
+            self.report({'INFO'}, "This Blender does not use Action slots")
+            return {'CANCELLED'}
+
+        pool = bpy.data.actions if self.all_actions else clip_actions()
+        fixed = sum(1 for action in pool if slots.retarget(action, armature))
+
+        anim = armature.animation_data
+        if anim is not None and anim.action is not None:
+            slots.bind(anim, anim.action, armature)
+        for track in (anim.nla_tracks if anim else ()):
+            for strip in track.strips:
+                if strip.action is not None:
+                    slots.bind_strip(strip, strip.action, armature)
+
+        self.report({'INFO'}, "Repaired %d action(s) for %s" % (fixed, armature.name))
+        return {'FINISHED'}
+
+
 class FOXB_PT_actions(bpy.types.Panel):
     bl_idname = "FOXB_PT_actions"
     bl_label = "Animation Library"
@@ -236,11 +291,23 @@ class FOXB_PT_actions(bpy.types.Panel):
             info = layout.row()
             info.scale_y = 0.8
             info.label(text="Select an armature to assign", icon='INFO')
+        elif slots.HAS_SLOTS and not slots.is_bound(armature.animation_data) \
+                and armature.animation_data is not None \
+                and armature.animation_data.action is not None:
+            box = layout.box()
+            box.label(text="Action assigned but not bound", icon='ERROR')
+            box.label(text="The character will not move until this is fixed.")
+            box.operator("foxbrowser.action_rebind", icon='FILE_REFRESH')
 
         footer = layout.row()
         footer.scale_y = 0.8
         footer.label(text="%d clip action(s) in this file" % len(clips))
-        layout.operator("foxbrowser.action_purge", icon='X')
+        row = layout.row(align=True)
+        row.operator("foxbrowser.action_purge", icon='X')
+        if slots.HAS_SLOTS:
+            sub = row.row(align=True)
+            sub.enabled = armature is not None
+            sub.operator("foxbrowser.action_rebind", icon='FILE_REFRESH')
 
 
 classes = (
@@ -249,6 +316,7 @@ classes = (
     FOXB_OT_action_stash,
     FOXB_OT_action_remove,
     FOXB_OT_action_purge,
+    FOXB_OT_action_rebind,
     FOXB_PT_actions,
 )
 

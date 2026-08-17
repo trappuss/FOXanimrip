@@ -12,7 +12,7 @@ and rig-unit grouping from the _rig.json sidecar.
 bl_info = {
     "name": "FoxBrowser Import (MGSV / Ground Zeroes)",
     "author": "minmaxmaxminnning",
-    "version": (1, 3, 0),
+    "version": (1, 3, 1),
     "blender": (4, 2, 0),
     "location": "File > Import > FoxBrowser, and View3D > Sidebar > FoxBrowser",
     "description": "Import FoxBrowser FMDL exports and bulk animation libraries",

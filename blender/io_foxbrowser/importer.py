@@ -9,7 +9,7 @@ import time
 
 import bpy
 
-from . import fbxpatch, materials, rig
+from . import fbxpatch, materials, rig, slots
 
 #: ``MESH_head_12`` -> ``MESH_head``; also copes with Blender's ``.001`` tails.
 _PART_SUFFIX = re.compile(r"(?:\.\d{3})?_\d+(?:\.\d{3})?$")
@@ -215,6 +215,10 @@ def _rename_action(armature_obj, model_name, clip_name, fake_user):
     action = anim.action
     action.name = "%s|%s" % (model_name, clip_name or "take")
     action.use_fake_user = bool(fake_user)
+    # The armature has just been renamed; move the 4.4+ Action slot with it so
+    # re-assigning this Action later still binds.
+    slots.retarget(action, armature_obj)
+    slots.bind(anim, action, armature_obj)
     return action
 
 

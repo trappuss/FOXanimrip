@@ -63,6 +63,29 @@ for byte and never re-encoded. Your original file is never touched.
 If the repair is disabled or fails, the import automatically retries without
 animation rather than dying.
 
+### 1b. Action slots, on Blender 4.4 and later
+
+Blender 4.4 gave Actions *slots*. F-curves no longer address an object directly:
+they address a slot, and a slot has to be bound to the object before anything is
+evaluated. An Action whose slot is unbound has all of its keyframes and animates
+nothing.
+
+A clip's slot is named after the temporary armature the FBX importer builds for
+the clip file — the one this add-on deletes a moment later. Assigning the
+leftover Action to your model's armature binds nothing, because Blender only
+auto-binds when the names match. What you see is a full set of keyframes in the
+Action Editor and a character standing in a T-pose, with no error and nothing in
+the interface to explain it.
+
+Every clip's slot is now renamed after the armature it was imported onto. That
+makes Blender's own name-based binding work everywhere — this add-on's panel,
+the Action Editor dropdown, the NLA, a file linked into another scene — instead
+of only where the add-on happens to be doing the assigning.
+
+For a scene imported with an older version: select the armature and click
+**Repair Slots** in the Animation Library panel. Blender 4.2 and 4.3 have no
+slots and were never affected.
+
 ### 2. Normal maps
 
 Fox Engine packs tangent-space normals into DXT5 as **X in alpha, Y in green**.

@@ -19,15 +19,43 @@ public sealed class MainForm : Form
         public readonly Dictionary<string, MtarMatch> Fits =
             new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>Best bone count seen, whether or not it cleared the threshold.</summary>
+        public int BestBones;
+
+        /// <summary>Why the set could not be read at all, if it could not.</summary>
+        public string Error = "";
+
+        /// <summary>Ticked by the user. Kept on the row so filtering the list
+        /// cannot silently drop a choice that is scrolled out of view.</summary>
+        public bool Ticked;
+
+        public bool Fitting => Fits.Count > 0;
+
         public string Label(int characterCount)
         {
             var clips = $"{Clips} clip{(Clips == 1 ? "" : "s")}";
+            if (Error.Length > 0)
+                return $"{Entry.Stem}   -   could not be read ({Error})";
+            if (!Fitting)
+                return $"{Entry.Stem}   -   {clips}, does not fit "
+                     + $"({BestBones} bone{(BestBones == 1 ? "" : "s")} matched)";
             if (characterCount <= 1)
             {
                 var bones = Fits.Values.FirstOrDefault()?.MatchedBones ?? 0;
                 return $"{Entry.Stem}   -   {clips}, {bones} bones matched";
             }
             return $"{Entry.Stem}   -   {clips}, fits {Fits.Count} of {characterCount}";
+        }
+
+        /// <summary>The "Fits" column: the verdict on its own, name and counts
+        /// having their own columns now.</summary>
+        public string Verdict(int characterCount)
+        {
+            if (Error.Length > 0) return "could not be read — " + Error;
+            if (!Fitting) return "does not fit";
+            return characterCount <= 1
+                ? "fits"
+                : $"fits {Fits.Count} of {characterCount}";
         }
     }
 
@@ -60,13 +88,21 @@ public sealed class MainForm : Form
     private readonly RadioButton _setsAll = new();
     private readonly RadioButton _setsPick = new();
     private readonly Button _findSets = new();
-    private readonly CheckedListBox _setList = new();
+    // A ListView rather than a CheckedListBox: that control only ever supports
+    // one selected row -- it throws on MultiExtended -- so ticking twenty sets
+    // meant twenty individual clicks. This also affords real columns.
+    private readonly ListView _setList = new();
+    private bool _bulkTicking;
     private readonly TextBox _clipFilter = new();
+    private readonly TextBox _setSearch = new();
+    private readonly CheckBox _setsShowAll = new();
+    private readonly List<SetRow> _shownSets = new();
 
     private readonly TextBox _outBox = new();
     private readonly Button _outBrowse = new();
 
     private readonly Button _exportButton = new();
+    private readonly Button _previewButton = new();
     private readonly Button _cancelButton = new();
     private readonly ProgressBar _progress = new();
     private readonly Label _status = new();
@@ -84,7 +120,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "foxanimrip - bulk animation export for Fox Engine games";
+        Text = $"foxanimrip {AppVersion.Current} - bulk animation export for Fox Engine games";
         MinimumSize = new Size(880, 720);
         Size = new Size(960, 840);
         StartPosition = FormStartPosition.CenterScreen;
@@ -247,8 +283,37 @@ public sealed class MainForm : Form
         _findSets.Click += (_, _) => _ = FindSetsAsync();
 
         _setList.Dock = DockStyle.Fill;
-        _setList.CheckOnClick = true;
-        _setList.IntegralHeight = false;
+        _setList.View = View.Details;
+        _setList.CheckBoxes = true;
+        _setList.MultiSelect = true;
+        _setList.FullRowSelect = true;
+        _setList.HideSelection = false;
+        _setList.Columns.Add("Animation set", 260);
+        _setList.Columns.Add("Clips", 60);
+        _setList.Columns.Add("Bones", 60);
+        _setList.Columns.Add("Fits", 200);
+        _setList.ItemChecked += OnSetItemChecked;
+        _setList.ContextMenuStrip = BuildSetMenu();
+        _setList.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.A && e.Control)
+            {
+                foreach (ListViewItem item in _setList.Items) item.Selected = true;
+                e.Handled = e.SuppressKeyPress = true;
+            }
+        };
+
+        _setSearch.Width = 200;
+        _setSearch.PlaceholderText = "Search sets, e.g. player2";
+        _setSearch.TextChanged += (_, _) => RefreshSetList();
+
+        // The list used to drop anything that did not fit, which is
+        // indistinguishable from the archive not existing. If someone is hunting
+        // for a set by name they need to see it and the reason, then decide for
+        // themselves -- naming a set explicitly is allowed to override the check.
+        _setsShowAll.Text = "Show every set, including ones that do not fit";
+        _setsShowAll.AutoSize = true;
+        _setsShowAll.CheckedChanged += (_, _) => RefreshSetList();
 
         var filterRow = new FlowLayoutPanel
         {
@@ -263,10 +328,35 @@ public sealed class MainForm : Form
         _clipFilter.Width = 220;
         _clipFilter.PlaceholderText = "leave blank for all";
         filterRow.Controls.Add(_clipFilter);
+        filterRow.Controls.Add(_setsShowAll);
+        _setsShowAll.Margin = new Padding(18, 6, 0, 0);
+        filterRow.Controls.Add(new Label
+        {
+            Text = "Shift or Ctrl selects several — ticking one ticks them all. "
+                 + "Right-click for tick / untick all.",
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+            Margin = new Padding(18, 6, 0, 0),
+        });
+
+        _previewButton.Text = "Browse & preview animations…";
+        _previewButton.AutoSize = true;
+        _previewButton.Enabled = false;
+        _previewButton.Click += (_, _) => _ = PreviewAsync();
+
+        var setButtons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, WrapContents = false,
+            FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0),
+        };
+        setButtons.Controls.Add(_findSets);
+        setButtons.Controls.Add(_previewButton);
+        setButtons.Controls.Add(_setSearch);
+        _setSearch.Margin = new Padding(10, 2, 0, 0);
 
         grid.Controls.Add(_setsAll, 0, 0);
         grid.Controls.Add(_setsPick, 1, 0);
-        grid.Controls.Add(_findSets, 2, 0);
+        grid.Controls.Add(setButtons, 2, 0);
         grid.Controls.Add(_setList, 0, 1);
         grid.SetColumnSpan(_setList, 3);
         grid.Controls.Add(filterRow, 0, 2);
@@ -437,6 +527,7 @@ public sealed class MainForm : Form
 
     private void FirstRun()
     {
+        Log($"foxanimrip {AppVersion.Current}");
         var settings = GuiSettings.Load();
         _theme = Theme.Parse(settings.Theme);
         _themeBox.SelectedIndex = _theme switch
@@ -670,16 +761,19 @@ public sealed class MainForm : Form
     {
         if (_contexts.Count > 0) return true;
 
-        var jobs = new List<(string Name, Func<byte[]> Read)>();
+        // The model's own path inside the archives is worth carrying: a rig
+        // filed in the same folder is very likely this character's.
+        var jobs = new List<(string Name, string Path, Func<byte[]> Read)>();
         if (_modelPath.Length > 0)
         {
             var path = _modelPath;
-            jobs.Add((Path.GetFileNameWithoutExtension(path), () => File.ReadAllBytes(path)));
+            jobs.Add((Path.GetFileNameWithoutExtension(path), path,
+                      () => File.ReadAllBytes(path)));
         }
         foreach (var entry in _chosenModels)
         {
             var captured = entry;
-            jobs.Add((captured.Stem, () => GameCatalog.Read(captured)));
+            jobs.Add((captured.Stem, captured.Path, () => GameCatalog.Read(captured)));
         }
         if (jobs.Count == 0) return false;
 
@@ -696,15 +790,22 @@ public sealed class MainForm : Form
                     var bytes = job.Read();
                     var info = RipJob.Inspect(bytes);
                     var built = ModelContext.Create(job.Name, bytes);
-                    built.Attach(Sources.FindFrig(archives, info.BoneHashes, null),
-                                 Sources.FindFrdv(archives, job.Name, null));
+                    var (choice, frdv) = RigCache.Resolve(
+                        archives, GameCatalog.FingerprintOf(archives), job.Name,
+                        info.BoneHashes, job.Path, LogThreadSafe, token);
+                    built.Attach(choice, frdv);
                     return built;
                 }, token);
                 _contexts.Add(context);
                 Log($"{context.Name}: {context.BoneCount} bones"
                     + (context.RigUnits > 0
                         ? $", rig {context.RigUnits} units / {context.RigSegments} segments"
+                          + $" ({context.RigMatchedBones}/{context.BoneCount} bones matched)"
                         : ", no rig found"));
+                if (!context.RigLooksRight)
+                    Log($"! {context.Name}: only {context.RigPrecision:P0} of the chosen rig's "
+                        + "bones are on this skeleton, so it may not be this character's rig. "
+                        + "Preview a clip before exporting thousands.");
             }
             return true;
         }
@@ -728,21 +829,162 @@ public sealed class MainForm : Form
             if (!await LoadCharactersAsync(token)) return;
             await FindSetsCore(token);
 
-            _setList.BeginUpdate();
-            _setList.Items.Clear();
-            var totalClips = 0;
-            foreach (var row in _sets)
-            {
-                totalClips += row.Clips;
-                _setList.Items.Add(row.Label(_contexts.Count), true);
-            }
-            _setList.EndUpdate();
-            Log($"{_sets.Count} compatible animation set(s), about {totalClips} clips in total");
-            _setsPick.Checked = _sets.Count > 0;
+            foreach (var row in _sets) row.Ticked = row.Fitting;
+            RefreshSetList();
+
+            var fitting = _sets.Count(r => r.Fitting);
+            var totalClips = _sets.Where(r => r.Fitting).Sum(r => r.Clips);
+            Log($"{fitting} compatible animation set(s), about {totalClips} clips in total");
+            if (fitting < _sets.Count)
+                Log($"{_sets.Count - fitting} other set(s) in this game do not fit — "
+                    + "tick \"Show every set\" to see them and why.");
+            _setsPick.Checked = fitting > 0;
         }
         catch (OperationCanceledException) { Log("Stopped."); }
         catch (Exception ex) { Log("! " + ex.Message); }
         finally { SetBusy(false, "Ready"); }
+    }
+
+    /// <summary>
+    /// One tick applies to everything selected.
+    ///
+    /// Selecting a range and then having to click twenty checkboxes one at a
+    /// time is the sort of thing that makes a tool tiring to use. If the row
+    /// being ticked is part of a selection, the whole selection follows it.
+    /// </summary>
+    private void OnSetItemChecked(object sender, ItemCheckedEventArgs e)
+    {
+        if (e.Item.Tag is SetRow row) row.Ticked = e.Item.Checked;
+        if (_bulkTicking) return;
+        if (_setList.SelectedItems.Count < 2 || !e.Item.Selected) return;
+
+        _bulkTicking = true;
+        try
+        {
+            foreach (ListViewItem item in _setList.SelectedItems)
+            {
+                if (ReferenceEquals(item, e.Item)) continue;
+                item.Checked = e.Item.Checked;
+                if (item.Tag is SetRow other) other.Ticked = e.Item.Checked;
+            }
+        }
+        finally { _bulkTicking = false; }
+    }
+
+    private ContextMenuStrip BuildSetMenu()
+    {
+        var menu = new ContextMenuStrip();
+
+        void Add(string text, Action action) =>
+            menu.Items.Add(text, null, (_, _) => action());
+
+        Add("Tick selected", () => TickItems(_setList.SelectedItems.Cast<ListViewItem>(), true));
+        Add("Untick selected", () => TickItems(_setList.SelectedItems.Cast<ListViewItem>(), false));
+        menu.Items.Add(new ToolStripSeparator());
+        Add("Tick all shown", () => TickItems(_setList.Items.Cast<ListViewItem>(), true));
+        Add("Untick all shown", () => TickItems(_setList.Items.Cast<ListViewItem>(), false));
+        menu.Items.Add(new ToolStripSeparator());
+        Add("Invert shown", () =>
+        {
+            _bulkTicking = true;
+            try
+            {
+                foreach (ListViewItem item in _setList.Items)
+                {
+                    item.Checked = !item.Checked;
+                    if (item.Tag is SetRow row) row.Ticked = item.Checked;
+                }
+            }
+            finally { _bulkTicking = false; }
+            AfterBulkTick();
+        });
+        Add("Select all", () =>
+        {
+            foreach (ListViewItem item in _setList.Items) item.Selected = true;
+        });
+
+        // "All shown" means what the search box and the show-all tick are
+        // currently letting through, so say so rather than implying everything.
+        menu.Opening += (_, _) =>
+        {
+            var selected = _setList.SelectedItems.Count;
+            menu.Items[0].Text = $"Tick selected ({selected})";
+            menu.Items[1].Text = $"Untick selected ({selected})";
+            menu.Items[0].Enabled = menu.Items[1].Enabled = selected > 0;
+            menu.Items[3].Text = $"Tick all shown ({_setList.Items.Count})";
+            menu.Items[4].Text = $"Untick all shown ({_setList.Items.Count})";
+        };
+        return menu;
+    }
+
+    private void TickItems(IEnumerable<ListViewItem> items, bool ticked)
+    {
+        _bulkTicking = true;
+        try
+        {
+            foreach (var item in items.ToList())
+            {
+                item.Checked = ticked;
+                if (item.Tag is SetRow row) row.Ticked = ticked;
+            }
+        }
+        finally { _bulkTicking = false; }
+        AfterBulkTick();
+    }
+
+    private void AfterBulkTick()
+    {
+        var ticked = _sets.Count(r => r.Ticked);
+        _status.Text = ticked == 0
+            ? "No animation set ticked."
+            : $"{ticked} animation set(s) ticked.";
+        if (ticked > 0 && !_setsPick.Checked) _setsPick.Checked = true;
+    }
+
+    /// <summary>
+    /// Rebuild the visible set list from the search box and the show-all tick.
+    ///
+    /// Ticks live on the rows rather than on the list control, so filtering the
+    /// view can never quietly discard a choice that scrolled out of sight.
+    /// </summary>
+    private void RefreshSetList()
+    {
+        var needle = _setSearch.Text.Trim();
+        var showAll = _setsShowAll.Checked;
+
+        _shownSets.Clear();
+        foreach (var row in _sets)
+        {
+            if (!showAll && !row.Fitting && !row.Ticked) continue;
+            if (needle.Length > 0
+                && row.Entry.Stem.IndexOf(needle, StringComparison.OrdinalIgnoreCase) < 0)
+                continue;
+            _shownSets.Add(row);
+        }
+
+        _bulkTicking = true;                 // building the list is not a user tick
+        _setList.BeginUpdate();
+        _setList.Items.Clear();
+        foreach (var row in _shownSets)
+        {
+            var item = new ListViewItem(row.Entry.Stem)
+            {
+                Checked = row.Ticked,
+                Tag = row,
+            };
+            item.SubItems.Add(row.Error.Length > 0 ? "-" : row.Clips.ToString());
+            item.SubItems.Add(row.Error.Length > 0 ? "-" : row.BestBones.ToString());
+            item.SubItems.Add(row.Verdict(_contexts.Count));
+            _setList.Items.Add(item);
+        }
+        _setList.EndUpdate();
+        _bulkTicking = false;
+
+        if (_shownSets.Count == 0 && needle.Length > 0)
+            _status.Text = showAll
+                ? $"No animation set is named like \"{needle}\"."
+                : $"Nothing fitting is named like \"{needle}\" — try \"Show every set\".";
+        UpdateEnabled();
     }
 
     /// <summary>Probe every animation set against every chosen character.</summary>
@@ -753,6 +995,10 @@ public sealed class MainForm : Form
         var minMatch = (int)_minMatch.Value;
         var catalog = _catalog;
 
+        // Every set is kept, fitting or not. A set that is quietly dropped is
+        // indistinguishable from one that does not exist, and someone looking
+        // for a specific archive has no way to tell which happened -- so the
+        // list records the reason and the interface can show it on request.
         var found = await Task.Run(() =>
         {
             var rows = new Dictionary<string, SetRow>(StringComparer.OrdinalIgnoreCase);
@@ -761,25 +1007,67 @@ public sealed class MainForm : Form
             {
                 token.ThrowIfCancellationRequested();
                 if (!seen.Add(entry.Name)) continue;
+
+                if (!rows.TryGetValue(entry.Name, out var row))
+                    rows[entry.Name] = row = new SetRow { Entry = entry };
+
                 byte[] bytes;
-                try { bytes = GameCatalog.Read(entry); } catch { continue; }
+                try { bytes = GameCatalog.Read(entry); }
+                catch (Exception ex) { row.Error = ex.Message; continue; }
 
                 foreach (var context in contexts)
                 {
                     var match = context.Check(bytes, minMatch);
-                    if (!match.Fits(minMatch)) continue;
-                    if (!rows.TryGetValue(entry.Name, out var row))
-                        rows[entry.Name] = row = new SetRow { Entry = entry, Clips = match.Clips };
                     row.Clips = Math.Max(row.Clips, match.Clips);
-                    row.Fits[context.Name] = match;
+                    row.BestBones = Math.Max(row.BestBones, match.MatchedBones);
+                    if (match.Fits(minMatch)) row.Fits[context.Name] = match;
                 }
             }
             return rows.Values.ToList();
         }, token);
 
         _sets.Clear();
-        _sets.AddRange(found.OrderByDescending(r => r.Clips)
+        _sets.AddRange(found.OrderByDescending(r => r.Fitting)
+                            .ThenByDescending(r => r.Clips)
                             .ThenBy(r => r.Entry.Stem, StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Open the preview on the character that is selected and the sets that are
+    /// ticked.
+    ///
+    /// Deliberately placed next to "Find animation sets" rather than beside the
+    /// export button: looking at a clip is meant to happen *before* committing
+    /// to writing thousands of files, and a control's position is most of what
+    /// tells you when to press it.
+    /// </summary>
+    private async Task PreviewAsync()
+    {
+        if (_busy) return;
+        SetBusy(true, "Opening the preview...");
+        _cancel = new CancellationTokenSource();
+        var token = _cancel.Token;
+
+        try
+        {
+            if (!await LoadCharactersAsync(token)) return;
+            if (_contexts.Count == 0 || _catalog is null) return;
+
+            // No compatibility pass and no set selection first. The browser
+            // lists every archive in the game and every character that was
+            // picked, and switching between them is a click -- which is the
+            // whole point, since deciding what fits is exactly the judgement
+            // that turned out to be unreliable.
+            SetBusy(false, "Ready");
+            var ticked = _sets.Where(r => r.Ticked).Select(r => r.Entry.Name).ToList();
+            using var preview = new PreviewForm(_catalog, _contexts.ToList(), Log, ticked);
+            Theme.Apply(preview, _theme);
+            preview.ShowDialog(this);
+            return;
+        }
+        catch (OperationCanceledException) { Log("preview cancelled"); }
+        catch (Exception ex) { Log("! preview: " + ex.Message); }
+        finally { if (_busy) SetBusy(false, "Ready"); }
     }
 
     private async Task ExportAsync()
@@ -811,9 +1099,15 @@ public sealed class MainForm : Form
 
             var pickOnly = _setsPick.Checked;
             var ticked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            for (var i = 0; i < _sets.Count; i++)
-                if (!pickOnly || (i < _setList.Items.Count && _setList.GetItemChecked(i)))
-                    ticked.Add(_sets[i].Entry.Name);
+            foreach (var row in _sets)
+                if (row.Error.Length == 0 && (!pickOnly || row.Ticked))
+                    ticked.Add(row.Entry.Name);
+
+            var forced = _sets.Where(r => pickOnly && r.Ticked && !r.Fitting).ToList();
+            foreach (var row in forced)
+                Log($"! {row.Entry.Stem} does not fit the chosen character "
+                    + $"({row.BestBones} bones matched). Exporting it anyway because you "
+                    + "ticked it; if every clip is skipped, lower \"Min. matching bones\".");
 
             if (ticked.Count == 0)
             {
@@ -830,7 +1124,10 @@ public sealed class MainForm : Form
                 foreach (var row in rows)
                 {
                     if (!ticked.Contains(row.Entry.Name)) continue;
-                    if (!row.Fits.ContainsKey(context.Name)) continue;   // not for this one
+                    // A set the user ticked by hand is exported even where the
+                    // fit check says no; one gathered by "everything that fits"
+                    // is not, or every character would get every other's clips.
+                    if (!row.Ticked && !row.Fits.ContainsKey(context.Name)) continue;
                     var captured = row.Entry;
                     sources.Add(new MtarSource(captured.Name, () => GameCatalog.Read(captured)));
                 }
@@ -1035,7 +1332,11 @@ public sealed class MainForm : Form
         _modelAll.Enabled = _modelNone.Enabled = ready && _modelList.Items.Count > 0;
         _modelFile.Enabled = ready;
         _findSets.Enabled = ready && HasCharacters && _catalog is not null;
+        // Previewing needs a character; it does not need an output folder,
+        // because looking is exactly what you do before deciding to save.
+        _previewButton.Enabled = ready && HasCharacters && _catalog is not null;
         _setList.Enabled = ready && _setsPick.Checked && _setList.Items.Count > 0;
+        _setSearch.Enabled = _setsShowAll.Enabled = ready && _sets.Count > 0;
         _exportButton.Enabled = ready && HasCharacters && _outBox.Text.Trim().Length > 0;
     }
 

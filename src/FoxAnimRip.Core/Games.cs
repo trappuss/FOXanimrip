@@ -51,8 +51,11 @@ public sealed class GameProfile
             "METAL GEAR SOLID V THE PHANTOM PAIN",
         },
         // TPP keeps the shipped archives in master\, and the streamed chunks
-        // beside them; master\0\ holds the patch layers.
-        ArchiveSubdirs = new[] { "master", "" },
+        // beside them; master\0\ holds the patch layers. mgo\ is a separate
+        // tree for Metal Gear Online -- a different game as far as the file
+        // layout is concerned, and the only place the male and female avatar
+        // models and their motions live. Leaving it out made those invisible.
+        ArchiveSubdirs = new[] { "master", "mgo", "" },
         Verified = true,
     };
 
