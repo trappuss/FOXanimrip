@@ -112,6 +112,7 @@ public sealed class MainForm : Form
     private readonly CheckBox _keepStatic = new();
     private readonly CheckBox _dedupe = new();
     private readonly CheckBox _exportModel = new();
+    private readonly CheckBox _rootMotionExport = new();
     private readonly NumericUpDown _pack = new();
     private readonly NumericUpDown _minMatch = new();
     private readonly NumericUpDown _step = new();
@@ -415,6 +416,13 @@ public sealed class MainForm : Form
         _exportModel.Checked = true;
         _exportModel.Margin = new Padding(0, 4, 16, 0);
 
+        // Off by default, matching the command line: clips baked on the spot are
+        // the right thing for a retargetable Action library, and a walk cycle
+        // that wanders off is a nuisance to reuse. On, the character travels.
+        _rootMotionExport.Text = "Keep root motion";
+        _rootMotionExport.AutoSize = true;
+        _rootMotionExport.Margin = new Padding(0, 4, 16, 0);
+
         _pack.Minimum = 0;
         _pack.Maximum = 500;
         _pack.Value = 50;
@@ -438,6 +446,7 @@ public sealed class MainForm : Form
         _themeBox.SelectedIndexChanged += (_, _) => OnThemeChanged();
 
         flow.Controls.Add(_exportModel);
+        flow.Controls.Add(_rootMotionExport);
         flow.Controls.Add(_dedupe);
         flow.Controls.Add(_withMesh);
         flow.Controls.Add(_keepStatic);
@@ -1144,6 +1153,7 @@ public sealed class MainForm : Form
                 KeepStatic = _keepStatic.Checked,
                 Dedupe = _dedupe.Checked,
                 PackSize = (int)_pack.Value,
+                RootMotion = _rootMotionExport.Checked,
                 Quiet = true,
             };
             GuiSettings.Update(s => s.OutDir = options.OutDir);

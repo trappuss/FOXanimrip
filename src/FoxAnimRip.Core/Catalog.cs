@@ -78,6 +78,16 @@ public sealed record ScanProgress(string Archive, int ArchiveIndex, int ArchiveC
 /// </summary>
 public sealed class GameCatalog
 {
+    /// <summary>
+    /// What this index records. Bumped whenever a new kind of file starts being
+    /// collected, because the archive fingerprint cannot notice that: the game
+    /// has not changed, only what we look for in it. Without this, adding a
+    /// bucket would load an old cache, see it marked complete, and report the
+    /// new list as legitimately empty.
+    /// </summary>
+    public const int CurrentSchema = 2;
+
+    public int Schema { get; set; } = CurrentSchema;
     public string Root { get; set; } = "";
     public string ProfileId { get; set; } = "custom";
     public string Fingerprint { get; set; } = "";
@@ -85,6 +95,10 @@ public sealed class GameCatalog
     public List<CatalogEntry> Mtars { get; set; } = new();
     public List<CatalogEntry> Rigs { get; set; } = new();
     public List<CatalogEntry> HelpBones { get; set; } = new();
+
+    /// <summary>Form-variation files: what a model's customisation options do.</summary>
+    public List<CatalogEntry> Variations { get; set; } = new();
+
     /// <summary>Archives already walked, so an interrupted scan can pick up.</summary>
     public List<string> Scanned { get; set; } = new();
     public bool Complete { get; set; }
@@ -217,6 +231,7 @@ public sealed class GameCatalog
         if (name.EndsWith(".mtar", StringComparison.OrdinalIgnoreCase)) return Mtars;
         if (name.EndsWith(".frig", StringComparison.OrdinalIgnoreCase)) return Rigs;
         if (name.EndsWith(".frdv", StringComparison.OrdinalIgnoreCase)) return HelpBones;
+        if (name.EndsWith(".fv2", StringComparison.OrdinalIgnoreCase)) return Variations;
         return null;
     }
 
@@ -286,8 +301,10 @@ public sealed class GameCatalog
         {
             var catalog = JsonSerializer.Deserialize<GameCatalog>(
                 File.ReadAllText(path), JsonOptions);
-            return catalog is { Fingerprint: not null } && catalog.Fingerprint == fingerprint
-                ? catalog : null;
+            if (catalog is null || catalog.Fingerprint != fingerprint) return null;
+            // An index written before a bucket existed is not wrong, just
+            // incomplete in a way it cannot report. Rescan instead.
+            return catalog.Schema == CurrentSchema ? catalog : null;
         }
         catch { return null; }
     }

@@ -52,6 +52,12 @@ Choosing the animations:
   --model-filter <t>   Narrow --for-mtar to models whose name or path has this.
                        Worth using: a full Phantom Pain sweep is thousands of
                        models and takes a while.
+  --inventory <dir>    Write models.tsv, textures.tsv and variations.tsv for the
+                       whole game, plus a rip-all-models.bat that exports every
+                       model listed. Honours --model-filter and --all-models.
+                       This is how you enumerate every character asset and every
+                       customisation option, including whether an option swaps a
+                       texture or only sets a shader value.
   --filter-any a,b,c   Keep clips whose name contains any of these.
   --locomotion         Shorthand for --filter-any with the standard walk / run /
                        crouch / turn / idle name fragments.
@@ -109,7 +115,7 @@ Other:
         public bool All, Rescan, Refresh, ListGames, ListModels, ListMtars, ListRigs, Where;
         public bool ListSets, CharactersOnly = true;
         public string SetsFilter = "", ListClips = "", ForMtar = "", ModelFilter = "", WhyMtar = "";
-        public string ListGrids = "";
+        public string ListGrids = "", Inventory = "";
         public bool ExportModel, NoTextures;
         public string ListModelsFilter = "";
         public RipOptions Rip = new();
@@ -163,6 +169,7 @@ Other:
                     case "--why-mtar": a.WhyMtar = Next("--why-mtar"); break;
                     case "--all-models": a.CharactersOnly = false; break;
                     case "--model-filter": a.ModelFilter = Next("--model-filter"); break;
+                    case "--inventory": a.Inventory = Next("--inventory"); break;
                     case "--min-match": a.Rip.MinMatch = int.Parse(Next("--min-match")); break;
                     case "--limit": a.Rip.Limit = int.Parse(Next("--limit")); break;
                     case "--step": a.Rip.Step = Math.Max(1, int.Parse(Next("--step"))); break;
@@ -298,7 +305,8 @@ Other:
         // Browsing animation archives does not need a character chosen: these
         // are the commands for when you have the animations and are looking for
         // the model, rather than the other way round.
-        if (a.ListSets || a.ListClips.Length > 0 || a.ForMtar.Length > 0 || a.ListGrids.Length > 0)
+        if (a.ListSets || a.ListClips.Length > 0 || a.ForMtar.Length > 0
+            || a.ListGrids.Length > 0 || a.Inventory.Length > 0)
         {
             catalog = OpenCatalog(root, profile, a.Rescan);
             return BrowseSets(a, catalog, archives);
@@ -505,6 +513,8 @@ Other:
     /// </summary>
     private static int BrowseSets(Args a, GameCatalog catalog, List<string> archives)
     {
+        if (a.Inventory.Length > 0) return WriteInventory(a, catalog);
+
         if (a.ListSets)
         {
             var sets = SetSurvey.Sets(catalog, a.SetsFilter, deep: true,
@@ -670,6 +680,64 @@ Other:
             }
         }
         return 0;
+    }
+
+    /// <summary>
+    /// Write out everything the game has: models, textures, and the variations
+    /// that change how a model looks.
+    /// </summary>
+    private static int WriteInventory(Args a, GameCatalog catalog)
+    {
+        var last = -1;
+        var progress = new Progress<(int Done, int Total, string Name)>(p =>
+        {
+            var percent = p.Total > 0 ? p.Done * 100 / p.Total : 0;
+            if (percent == last || percent % 5 != 0) return;
+            last = percent;
+            Log($"  {percent}% ({p.Done}/{p.Total})");
+        });
+
+        Log(a.CharactersOnly
+            ? "reading character models (--all-models widens this)"
+            : "reading every model in the game");
+        var counts = Inventory.Write(catalog, a.Inventory, a.ModelFilter,
+                                     a.CharactersOnly, Log, progress);
+
+        var names = new List<string>();
+        try
+        {
+            foreach (var line in File.ReadLines(Path.Combine(a.Inventory, "models.tsv")).Skip(1))
+            {
+                var tab = line.IndexOf('\t');
+                if (tab > 0) names.Add(line[..tab]);
+            }
+            Inventory.WriteRipScript(a.Inventory, catalog.ProfileId, catalog.Root, names);
+        }
+        catch (Exception ex) { Log("! could not write the rip script: " + ex.Message); }
+
+        Console.WriteLine();
+        Console.WriteLine($"models.tsv          {counts.Models} model(s), "
+                          + $"{counts.Materials} material(s)");
+        Console.WriteLine($"textures.tsv        {counts.Textures} texture reference(s)");
+        Console.WriteLine($"variations.tsv      {counts.Variations} form variation(s): "
+                          + $"{counts.Swaps} texture swap(s), {counts.Parameters} "
+                          + $"material parameter(s), {counts.Attachments} attachment(s)");
+        Console.WriteLine($"rip-all-models.bat  exports the {names.Count} model(s) listed");
+
+        if (counts.Unresolved > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"{counts.Unresolved} name(s) could not be resolved and appear as "
+                              + "hex. The game's dictionaries do not cover everything; those "
+                              + "entries are real, just unnamed.");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("In variations.tsv: a textureSwap row means the option points at a "
+                          + "different texture file. A materialParameter row means it only "
+                          + "changes a shader value. Something like a skin tone can be built "
+                          + "either way -- this is where you find out which.");
+        return counts.Models > 0 ? 0 : 3;
     }
 
     /// <summary>

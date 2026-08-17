@@ -29,6 +29,7 @@ imported as an Action.*
 - [Preview](#look-before-you-export)
 - [Command line](#command-line)
 - [Finding a base model for an animation set](docs/finding-locomotion.md)
+- [Every model, texture and customisation option](docs/inventory.md)
 - [How it works](#how-it-works)
 - [Is it independent of FoxBrowser?](#is-it-independent-of-foxbrowser)
 - [Portability](#portability)
@@ -203,7 +204,11 @@ foxanimrip --game gz --character sna2_main0_def --all --out C:\rips\anims
 | `--list-clips <set>` | The clip names inside one archive. |
 | `--for-mtar <set>` | The models that can play an archive, best first — how you find a base model for a whole animation set. See [the walkthrough](docs/finding-locomotion.md). |
 | `--model-filter <text>` / `--all-models` | Narrow or widen the `--for-mtar` search. |
+| `--inventory <dir>` | Every model, texture and customisation option in the game as TSV, plus a script that rips every model listed. See [the inventory notes](docs/inventory.md). |
 | `--filter-any a,b,c` | Keep clips whose name contains any of these. |
+| `--locomotion` | Name-fragment shorthand for movement clips. Loose by nature. |
+| `--grid` / `--list-grids <set>` | Locomotion by structure rather than by name: only clips forming a detected movement grid. Exact where it applies, and it reports a grid that does not close. |
+| `--root-motion` | Keep the root's travel. Off by default, which bakes clips on the spot — right for a retargetable Action library, wrong if the character should actually move. |
 | `--locomotion` | Shorthand for the standard walk / run / crouch / turn / idle name fragments. |
 
 **Output**

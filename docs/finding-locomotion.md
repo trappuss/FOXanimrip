@@ -32,7 +32,7 @@ that state.
 | TPP player | `Assets/tpp/motion/mtar/player2/player2_resident.mtar`, inside `player2_resident_motion.fpk` in `chunk0.dat` |
 | TPP player, online | `Assets/tpp/level_asset/chara/player/game_object/player2_online_motion.fox2` names further sets |
 | MGO avatars | `mgoplayer_resident.mtar`, inside `Assets/mgo/pack/player/motion/mgo_player_resident_motion.fpk` |
-| Ground Zeroes player | `TppGzPlayer_layers` |
+| Ground Zeroes player | `TppGzPlayer_layers`, with `TppGzPlayerFacial` for the face |
 
 `player2_resident.mtar` is the one holding hundreds of the player's default
 animations — running, CQC, carrying, stairs — so for TPP locomotion it is the
@@ -177,6 +177,13 @@ near-identical variants.
 Do the same with `--game gz` for Ground Zeroes, into a different folder. The two
 games' skeletons are close but not identical, and mixing the exports makes it
 impossible to tell later which is which.
+
+> **`--grid` may not apply to Ground Zeroes.** Grid detection reads structure out
+> of clip names, and Ground Zeroes does not necessarily name its clips the way The
+> Phantom Pain does. Run `--list-grids TppGzPlayer_layers` first: if it finds
+> nothing, use `--locomotion` there instead. `--grid` selecting nothing is
+> reported rather than silently obeyed, so an empty export is not the failure
+> mode — but checking first saves the round trip.
 
 ### 5. Check before you commit
 

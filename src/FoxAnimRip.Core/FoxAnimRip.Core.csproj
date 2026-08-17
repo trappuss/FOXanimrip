@@ -26,6 +26,10 @@
       <HintPath>$(FoxBrowserRefDir)/MgsvModBldr.Tools.Browse.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="MgsvModBldr.Tools.Fv2">
+      <HintPath>$(FoxBrowserRefDir)/MgsvModBldr.Tools.Fv2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Avalonia.Base">
       <HintPath>$(FoxBrowserRefDir)/Avalonia.Base.dll</HintPath>
       <Private>false</Private>

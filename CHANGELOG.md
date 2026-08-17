@@ -3,6 +3,68 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.14.0] - 2026-08-17
+
+### Added
+
+- **`--inventory <dir>`** — everything the game has, written down. Three tables
+  plus a script:
+
+  - `models.tsv` — every model with bone, mesh, material and mesh-group counts,
+    the archive it came from and its patch layer.
+  - `textures.tsv` — every texture each material references, by role.
+  - `variations.tsv` — what each **form variation** (`.fv2`) does: mesh groups
+    hidden and shown, texture swaps, material parameters, attached sub-models,
+    and the files those point at.
+  - `rip-all-models.bat` — exports every model listed, in batches, since one
+    process per character spends longer starting up than working.
+
+  This is the answer to "list every player model and its customisation options".
+  Fox Engine does not store a character as a finished thing: a model has named
+  mesh groups, and a form variation hides some, shows others, swaps individual
+  textures, sets shader values and bolts extra models onto bones. One `.fmdl`
+  plus a folder of `.fv2` files is how a few files become hundreds of
+  appearances — so an option is an instruction, not a file, and this reads the
+  instructions out.
+
+  It also settles the skin-tone question rather than guessing at it: a
+  `textureSwap` row means the option genuinely points at a different texture, a
+  `materialParameter` row means it only changes a shader value. Both mechanisms
+  exist and the file says which one an option uses.
+
+- `.fv2` files are now indexed. **Animation archives (`.mtar`) have nothing to do
+  with models** — they hold only `.gani` clips — so nothing about customisation
+  was reachable before this.
+
+### Changed
+
+- The archive index carries a schema number, and an index written before a file
+  type was collected is rescanned rather than reused. The archive fingerprint
+  cannot notice this on its own: the game has not changed, only what is being
+  looked for in it — so without the schema, adding `.fv2` would have loaded an
+  old index, seen it marked complete, and reported no variations at all.
+
+  **The Phantom Pain and Ground Zeroes both re-index once** on the next run.
+
+## [1.13.0] - 2026-08-17
+
+### Added
+
+- **Keep root motion** in the window's options, beside *Also export the character
+  model*. Root motion was reachable from the command line and the preview but not
+  from the interface most people use.
+- One export script per game, each covering both root-motion variants:
+  - `scripts/export-mgsv-player.bat` — Phantom Pain, `skl0_main0_def` and
+    `skl0_main0_def_f`, in place and travelling. Reports both models' bone counts
+    first, since if they share a skeleton their clips come out identical and one
+    set will do.
+  - `scripts/export-gz-player.bat` — Ground Zeroes, `sna2_main0_def`, in place and
+    travelling, plus the facial set. Facial is exported once rather than in both,
+    since face bones carry no root travel and the copies would be identical.
+
+  These replace `export-locomotion-rootmotion.bat`, which covered a subset of the
+  same ground with root motion only.
+
 ## [1.12.1] - 2026-08-17
 
 ### Fixed
