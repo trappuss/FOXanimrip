@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FoxAnimRip</RootNamespace>
+    <AssemblyName>FoxAnimRip.Core</AssemblyName>
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
+  </PropertyGroup>
+
+  <!-- FoxBrowser's assemblies are never shipped with this tool. They are read
+       out of the user's own FoxBrowser.exe at run time; these references exist
+       only so the compiler knows the API shape. Set FoxBrowserRefDir to a
+       folder holding them (see tools/extract-refs.py). -->
+  <ItemGroup>
+    <Reference Include="FoxBrowser.Core">
+      <HintPath>$(FoxBrowserRefDir)/FoxBrowser.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="FoxBrowser.Native">
+      <HintPath>$(FoxBrowserRefDir)/FoxBrowser.Native.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="MgsvModBldr.Tools.Browse">
+      <HintPath>$(FoxBrowserRefDir)/MgsvModBldr.Tools.Browse.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="MgsvModBldr.Tools.Fv2">
+      <HintPath>$(FoxBrowserRefDir)/MgsvModBldr.Tools.Fv2.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Avalonia.Base">
+      <HintPath>$(FoxBrowserRefDir)/Avalonia.Base.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

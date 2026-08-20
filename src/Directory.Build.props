@@ -1,0 +1,17 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!--
+  One version for every project.
+
+  This exists because a bump was once applied to the window's project and not the
+  console tool's, so the two binaries shipped in the same zip reported different
+  builds, and the only way anyone found out was reading `strings` on the exe.
+  Bump it here; there is nowhere else to forget.
+-->
+<Project>
+
+  <PropertyGroup>
+    <Version>1.23.0</Version>
+    <Company>trappuss</Company>
+  </PropertyGroup>
+
+</Project>

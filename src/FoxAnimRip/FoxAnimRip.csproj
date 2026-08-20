@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>foxanimrip</AssemblyName>
+    <RootNamespace>FoxAnimRip</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <Product>foxanimrip</Product>
+    <AssemblyTitle>foxanimrip</AssemblyTitle>
+    <Description>Bulk animation export for Fox Engine games via FoxBrowser</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../FoxAnimRip.Core/FoxAnimRip.Core.csproj" />
+  </ItemGroup>
+
+</Project>
