@@ -107,30 +107,59 @@ set "ADDON=!ADDON:"=!"
 
 rem ---- 5. repository -------------------------------------------------------
 echo   [4/7] repository...
+
+rem GitHub rejects pushes that expose a private email (error GH007), so commit
+rem as the noreply address it issues for exactly this purpose.
+for /f "delims=" %%I in ('gh api user -q .id 2^>nul') do set "UID=%%I"
+set "NOREPLY=!UID!+!USERNAME!@users.noreply.github.com"
+
 if not exist ".git" (
   echo         creating a new local repository
   git init -q || (pause & exit /b 1)
   git branch -M main
 )
-git remote get-url origin >nul 2>&1
-if errorlevel 1 (
+git config user.name "!USERNAME!"
+git config user.email "!NOREPLY!"
+
+rem Any commit already made with the private address has to be rewritten, or
+rem the push is refused again on that old commit.
+git rev-parse HEAD >nul 2>&1 && git commit -q --amend --reset-author --no-edit 2>nul
+
+echo.
+set "REPONAME=foxanimrip"
+set /p REPONAME="        Repository to publish to [foxanimrip]: "
+if "!REPONAME!"=="" set "REPONAME=foxanimrip"
+
+set "EXISTS=0"
+gh repo view "!USERNAME!/!REPONAME!" >nul 2>&1 && set "EXISTS=1"
+
+if "!EXISTS!"=="1" (
+  for /f "delims=" %%B in ('gh repo view "!USERNAME!/!REPONAME!" --json defaultBranchRef -q .defaultBranchRef.name 2^>nul') do set "BRANCH=%%B"
+  if "!BRANCH!"=="" set "BRANCH=main"
   echo.
-  set "REPONAME=FOXanimrip"
-  set /p REPONAME="        Repository name [FOXanimrip]: "
-  if "!REPONAME!"=="" set "REPONAME=FOXanimrip"
+  echo         !USERNAME!/!REPONAME! already exists ^(branch !BRANCH!^).
+  echo         Publishing REPLACES its contents with this folder.
+  choice /C YN /N /M "        Replace it? (Y/N) "
+  if errorlevel 2 (echo         cancelled & pause & exit /b 0)
+
+  git remote get-url origin >nul 2>&1 && git remote remove origin
+  git remote add origin "https://github.com/!USERNAME!/!REPONAME!.git"
+  git add -A
+  git diff --cached --quiet || git commit -q -m "foxanimrip !VERSION!"
+  git branch -M !BRANCH!
+  echo         replacing !BRANCH! ...
+  git push -u origin !BRANCH! --force || (
+     echo         push failed & pause & exit /b 1)
+) else (
   set "VIS=--public"
   set /p PRIV="        Make it private? (y/N): "
   if /I "!PRIV!"=="y" set "VIS=--private"
+  set "BRANCH=main"
   git add -A
-  git commit -q -m "foxanimrip !VERSION!" 2>nul
+  git diff --cached --quiet || git commit -q -m "foxanimrip !VERSION!"
   echo         creating github.com/!USERNAME!/!REPONAME! ...
   gh repo create "!REPONAME!" !VIS! --source . --remote origin --push || (
      echo         could not create the repository & pause & exit /b 1)
-) else (
-  echo         pushing changes
-  git add -A
-  git diff --cached --quiet && echo         nothing new to commit || git commit -q -m "foxanimrip !VERSION!"
-  git push -u origin main 2>nul || git push
 )
 for /f "delims=" %%R in ('gh repo view --json nameWithOwner -q .nameWithOwner 2^>nul') do set "REPO=%%R"
 echo         !REPO!
@@ -183,7 +212,7 @@ if errorlevel 1 (
 
 rem ---- 7. wiki -------------------------------------------------------------
 echo   [7/7] wiki...
-if not exist "wiki" (echo         no wiki\ folder - skipping & goto :done)
+if not exist "wiki" (echo         no wiki\ folder - skipping & goto :cleanup)
 gh api -X PATCH "repos/!REPO!" -f has_wiki=true >nul 2>&1
 
 set "W=%TEMP%\fxwiki"
@@ -196,13 +225,16 @@ mkdir "%W%" 2>nul
 pushd "%W%"
 git init -q
 copy /y "!ROOT!wiki\*.md" . >nul
+git -c user.name="!USERNAME!" -c user.email="!NOREPLY!" commit -q -m "Fox Engine Asset Handbook" --allow-empty 2>nul
 git add -A
-git -c user.name="!GNAME!" -c user.email="!GMAIL!" commit -q -m "Fox Engine Asset Handbook"
+git -c user.name="!USERNAME!" -c user.email="!NOREPLY!" commit -q -m "Fox Engine Asset Handbook" 2>nul
 git branch -M master
 git remote add origin "https://github.com/!REPO!.wiki.git"
-git push -q -u origin master 2>nul && (popd & echo         wiki created and pushed & goto :done)
+git push -q -u origin master 2>nul
+if not errorlevel 1 (popd & echo         wiki created and pushed & goto :cleanup)
 git branch -M main
-git push -q -u origin main 2>nul && (popd & echo         wiki created and pushed & goto :done)
+git push -q -u origin main 2>nul
+if not errorlevel 1 (popd & echo         wiki created and pushed & goto :cleanup)
 popd
 
 echo.
@@ -216,7 +248,7 @@ if exist "%W%" rmdir /s /q "%W%"
 git clone -q "https://github.com/!REPO!.wiki.git" "%W%" 2>nul
 if not exist "%W%\.git" (
    echo         still cannot reach the wiki - run this file again later.
-   goto :done
+   goto :cleanup
 )
 
 :wikipush
@@ -226,10 +258,26 @@ git add -A
 git diff --cached --quiet && (
   echo         wiki already up to date
 ) || (
-  git -c user.name="!GNAME!" -c user.email="!GMAIL!" commit -q -m "Handbook update for !VERSION!"
+  git -c user.name="!USERNAME!" -c user.email="!NOREPLY!" commit -q -m "Handbook update for !VERSION!"
   git push -q && echo         wiki pushed
 )
 popd
+
+:cleanup
+rem ---- offer to remove a repository created by mistake ---------------------
+gh repo view "!USERNAME!/FOXENGINErip" >nul 2>&1
+if errorlevel 1 goto :done
+if /I "!REPONAME!"=="FOXENGINErip" goto :done
+echo.
+echo         You also have an empty repository called FOXENGINErip.
+choice /C YN /N /M "        Delete it? (Y/N) "
+if errorlevel 2 goto :done
+gh repo delete "!USERNAME!/FOXENGINErip" --yes 2>nul
+if not errorlevel 1 (echo         deleted & goto :done)
+echo         needs one extra permission - approve it in the browser...
+gh auth refresh -h github.com -s delete_repo
+gh repo delete "!USERNAME!/FOXENGINErip" --yes 2>nul
+if errorlevel 1 echo         could not delete it - remove it at https://github.com/!USERNAME!/FOXENGINErip/settings
 
 :done
 echo.
