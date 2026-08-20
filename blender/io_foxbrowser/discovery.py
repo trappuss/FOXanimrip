@@ -31,12 +31,32 @@ TEXTURE_DIR_SUFFIX = "_textures"
 #: Directory names skipped entirely during a recursive walk.
 _SKIP_DIR_SUFFIXES = (SOURCE_DIR_SUFFIX, TEXTURE_DIR_SUFFIX)
 
+#: A real model export always drops at least one of these beside its FBX -- a
+#: rig.json / maps.tsv, or a _source / _textures folder.  Animation clips have
+#: none, which is how a recursive scan tells the models apart from the tens of
+#: thousands of clip FBXs an all-animations rip writes one per file.  It keys on
+#: the sidecars, not folder names, so a renamed export folder is still fine.
+_MODEL_SIDECAR_FILES = ("_rig.json", "_maps.tsv")
+_MODEL_SIDECAR_DIRS = (SOURCE_DIR_SUFFIX, TEXTURE_DIR_SUFFIX)
+
+
+def has_model_sidecar(directory, stem):
+    """True if *stem*.fbx in *directory* is a real model export (has sidecars),
+    not a bare animation clip."""
+    for suffix in _MODEL_SIDECAR_FILES:
+        if os.path.isfile(os.path.join(directory, stem + suffix)):
+            return True
+    for suffix in _MODEL_SIDECAR_DIRS:
+        if os.path.isdir(os.path.join(directory, stem + suffix)):
+            return True
+    return False
+
 
 class ExportSet:
     """One model plus whatever FoxBrowser wrote alongside it."""
 
     __slots__ = ("model_path", "name", "directory", "rig_json",
-                 "textures_dir", "source_dir", "_texture_index")
+                 "textures_dir", "source_dir", "_texture_index", "_map_sidecar")
 
     def __init__(self, model_path: str):
         self.model_path = os.path.normpath(model_path)
@@ -53,9 +73,34 @@ class ExportSet:
         self.source_dir = src if os.path.isdir(src) else ""
 
         self._texture_index = None
+        self._map_sidecar = None
 
     def __repr__(self):  # pragma: no cover - debugging aid
         return "<ExportSet %s>" % self.name
+
+    def map_sidecar(self):
+        """``{base_stem: (normal_stem, spec_stem)}`` from ``<name>_maps.tsv``.
+
+        The tool writes this so the normal and spec maps can be wired even when a
+        texture came out hash-named and its role is no longer in the file name.
+        Keyed and valued by stem (no extension) to match the texture index.
+        Empty dict when there is no sidecar."""
+        if self._map_sidecar is not None:
+            return self._map_sidecar
+        out = {}
+        path = os.path.join(self.directory, self.name + "_maps.tsv")
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh.read().splitlines()[1:]:      # skip header
+                    cols = line.split("\t")
+                    if len(cols) < 3 or not cols[0]:
+                        continue
+                    stem = lambda s: os.path.splitext(s)[0] if s else ""
+                    out[stem(cols[0])] = (stem(cols[1]), stem(cols[2]))
+        except OSError:
+            pass
+        self._map_sidecar = out
+        return out
 
     @property
     def extension(self) -> str:
@@ -244,6 +289,10 @@ def gather_from_folder(directory, recursive=False, extensions=MODEL_EXTENSIONS,
                 dirs[:] = []
         for entry in sorted(files):
             if os.path.splitext(entry)[1].lower() in extensions:
+                # Recursive scans reach the animation library; keep only real
+                # model exports (the ones with sidecars), not bare clip FBXs.
+                if not has_model_sidecar(root, os.path.splitext(entry)[0]):
+                    continue
                 found.append(os.path.join(root, entry))
 
     return [ExportSet(p) for p in _dedupe(found, prefer_all_formats)]

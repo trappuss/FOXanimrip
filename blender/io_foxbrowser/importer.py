@@ -199,6 +199,34 @@ def _import_model(export_set, opts, report, snapshot):
 
 # -- post processing ------------------------------------------------------
 
+def _unhide_meshes(objects, report):
+    """Make every imported mesh visible.
+
+    Fox Engine flags a model's default-hidden mesh groups as invisible in the
+    file -- the created-soldier base body is the clearest case: in game it is
+    hidden and swapped out by whatever gear is equipped, so every one of its
+    mesh groups ships with visibility off. Blender's FBX importer honours that
+    flag and imports the mesh hidden, so the viewport shows only the skeleton
+    while the geometry sits there unseen. FoxBrowser ignores the flag and draws
+    everything; matching that is what people expect, so a rip they can actually
+    look at un-hides the lot. The geometry was never missing -- only hidden.
+    """
+    hidden = 0
+    for obj in objects:
+        if obj.type != 'MESH':
+            continue
+        if obj.hide_viewport:
+            obj.hide_viewport = False
+            hidden += 1
+        try:
+            obj.hide_set(False)
+        except RuntimeError:
+            pass          # not in the view layer yet; the flag above is enough
+    if hidden:
+        report.info("made %d hidden mesh group(s) visible "
+                    "(the base body ships hidden in-game)" % hidden)
+
+
 def _relink(objects, collection):
     for obj in objects:
         for existing in list(obj.users_collection):
@@ -351,6 +379,7 @@ def import_set(context, export_set, opts, report, parent_collection=None):
 
     created = [o for o in bpy.data.objects if o not in before]
     _relink(created, collection)
+    _unhide_meshes(created, report)
     result.objects = created
 
     armature_obj = next((o for o in created if o.type == 'ARMATURE'), None)

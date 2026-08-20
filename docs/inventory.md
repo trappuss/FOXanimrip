@@ -103,3 +103,16 @@ not changed, only what is being looked for in it. The index therefore carries a
 schema number, and an index written before `.fv2` was collected is rescanned
 rather than reused — otherwise it would load, report itself complete, and show no
 variations at all.
+
+## Getting the variation files out
+
+```bat
+foxanimrip-cli --game tpp --rip-variations mgo/fova/chara --out C:\rips\avatar-fova
+```
+
+The inventory names the files; this extracts them. The filter matches variation
+names or paths — `mgo/fova/chara` is the whole MGO avatar customisation set,
+which is where the five skin tones per garment per gender live, all as real
+texture swaps. Each entry is tried as a texture first (decoded to DDS) and as a
+raw copy otherwise, and `ripped-files.tsv` records which variation owns which
+file, including the entries that could not be read.

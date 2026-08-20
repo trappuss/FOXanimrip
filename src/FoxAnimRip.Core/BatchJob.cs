@@ -37,7 +37,11 @@ public static class BatchJob
         log ??= _ => { };
         var result = new BatchResult();
         var watch = Stopwatch.StartNew();
-        var perCharacterFolders = characters.Count > 1;
+        // Tree layout mirrors each set's origin path, which is the same wherever
+        // the clip came from, so a per-character folder on top would break the
+        // mirror. The "rip every set" sweep also assigns each set to a single
+        // model, so nothing collides.
+        var perCharacterFolders = characters.Count > 1 && !options.Tree;
 
         for (var i = 0; i < characters.Count; i++)
         {
@@ -89,6 +93,12 @@ public static class BatchJob
                 Dedupe = options.Dedupe,
                 DedupeRotation = options.DedupeRotation,
                 PackSize = options.PackSize,
+                RootMotion = options.RootMotion,
+                Tree = options.Tree,
+                IndexAppend = options.IndexAppend,
+                Measure = options.Measure,
+                GridOnly = options.GridOnly,
+                Filters = options.Filters,
             };
 
             var index = i;

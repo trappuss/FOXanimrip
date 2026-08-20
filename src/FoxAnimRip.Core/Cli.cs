@@ -34,6 +34,14 @@ Choosing the model:
 Choosing the animations:
   --mtar <file|name>   One animation archive, repeatable.
   --all                Every animation archive in the game that fits the model.
+  --all-sets           No model needed: rip EVERY animation archive in the game,
+                       each bound to the model whose skeleton best fits it, laid
+                       out mirroring where each set lives in the archives (implies
+                       --tree). Writes all-sets-report.tsv listing every set, the
+                       model it used, and any it could not place. --all-models
+                       widens the candidate skeletons past character models to
+                       everything (vehicles, gear, creatures). This is the
+                       "rip everything" sweep; expect it to take a while.
   --list-mtars         Print compatible animation archives, then exit.
   --list-rigs          Print the rigs that fit this character, best first, and
                        exit. Use this when clips come out distorted: the top row
@@ -52,22 +60,43 @@ Choosing the animations:
   --model-filter <t>   Narrow --for-mtar to models whose name or path has this.
                        Worth using: a full Phantom Pain sweep is thousands of
                        models and takes a while.
+  --dump-mog <dir>     Extract every motion-graph (.mog) file -- the blend/state
+                       logic behind locomotion. They are hash-named (in no
+                       dictionary), so they are found by extension code. Saves the
+                       raw files and a mogs.tsv header summary.
+  --ext-histogram <f>  Diagnostic: count every file in the archives by extension
+                       code (the top bits of its path hash), to <f>. Settles what
+                       file types an install actually holds -- e.g. whether .mog
+                       is present at all.
   --inventory <dir>    Write models.tsv, textures.tsv and variations.tsv for the
                        whole game, plus a rip-all-models.bat that exports every
                        model listed. Honours --model-filter and --all-models.
                        This is how you enumerate every character asset and every
                        customisation option, including whether an option swaps a
                        texture or only sets a shader value.
+  --rip-variations <f> Extract the files that form variations point at -- the
+                       swap textures the inventory can only name. <f> filters by
+                       variation name or path (e.g. mgo/fova/chara for the MGO
+                       avatar customisation set). Needs --out; writes textures/
+                       and a ripped-files.tsv mapping every variation to its
+                       files, including the ones that could not be read.
   --filter-any a,b,c   Keep clips whose name contains any of these.
   --locomotion         Shorthand for --filter-any with the standard walk / run /
                        crouch / turn / idle name fragments.
 
 Output:
   --out <folder>       Clips land in <out>/<mtar>/<clip>.fbx, plus an index.tsv
+  --tree               Mirror each set's origin path instead of a flat folder:
+                       <out>/Assets/.../<mtar>/<clip>.fbx. index.tsv gains a
+                       sourcePath column either way. Implied by --all-sets.
   --filter <text>      Only clips whose name contains this.
   --min-match <n>      Bones a clip must drive to count. Default 8.
   --limit <n>          Stop after n clips.
   --list               Print what would be exported; write nothing.
+  --measure            Measure locomotion instead of exporting FBX: writes
+                       locomotion-params.tsv with each clip's root travel
+                       distance, speed (m/s), net turn and turn rate -- the
+                       authored numbers a 1:1 movement rebuild needs.
   --with-mesh          Put the mesh in every clip file. Off by default: it is
                        identical in all of them and turns a ~400 KB clip into
                        ~3.4 MB.
@@ -88,6 +117,12 @@ Output:
                        materials and textures -- next to the animations, in the
                        layout the Blender add-on expects.
   --no-textures        With --export-model, skip the textures.
+  --no-rig             Skip the rig search entirely. Right for model-only
+                       exports of gear and attachments, which have no rig and
+                       otherwise pay a full archive walk each to learn that.
+  --skip-existing      With --export-model, skip characters whose FBX is
+                       already in the output folder, so an interrupted batch
+                       resumes instead of repeating.
 
 Other:
   --fb <path>          FoxBrowser.exe. Auto-detected if it is beside this tool
@@ -104,6 +139,8 @@ Other:
   --where              Print where settings and caches are going, then exit.
   --quiet              Only report failures that lose a clip.
   -h, --help           This text.
+  -V, --version        Print the build number and exit. Every run also prints
+                       it as its first line.
 """;
 
     private sealed class Args
@@ -115,8 +152,11 @@ Other:
         public bool All, Rescan, Refresh, ListGames, ListModels, ListMtars, ListRigs, Where;
         public bool ListSets, CharactersOnly = true;
         public string SetsFilter = "", ListClips = "", ForMtar = "", ModelFilter = "", WhyMtar = "";
-        public string ListGrids = "", Inventory = "";
-        public bool ExportModel, NoTextures;
+        public string ListGrids = "", Inventory = "", RipVariations = "";
+        public bool ExportModel, NoTextures, NoRig, SkipExisting;
+        public bool AllSets;
+        public string DumpMog = "";
+        public string ExtHistogram = "";
         public string ListModelsFilter = "";
         public RipOptions Rip = new();
     }
@@ -170,12 +210,18 @@ Other:
                     case "--all-models": a.CharactersOnly = false; break;
                     case "--model-filter": a.ModelFilter = Next("--model-filter"); break;
                     case "--inventory": a.Inventory = Next("--inventory"); break;
+                    case "--rip-variations": a.RipVariations = Next("--rip-variations"); break;
                     case "--min-match": a.Rip.MinMatch = int.Parse(Next("--min-match")); break;
                     case "--limit": a.Rip.Limit = int.Parse(Next("--limit")); break;
                     case "--step": a.Rip.Step = Math.Max(1, int.Parse(Next("--step"))); break;
                     case "--fps": a.Rip.Fps = float.Parse(Next("--fps")); break;
                     case "--all": a.All = true; break;
                     case "--scan": a.All = true; break;   // old name
+                    case "--all-sets": a.AllSets = true; break;
+                    case "--tree": a.Rip.Tree = true; break;
+                    case "--measure": a.Rip.Measure = true; break;
+                    case "--dump-mog": a.DumpMog = Next("--dump-mog"); break;
+                    case "--ext-histogram": a.ExtHistogram = Next("--ext-histogram"); break;
                     case "--with-mesh": a.Rip.WithMesh = true; break;
                     case "--list": a.Rip.ListOnly = true; break;
                     case "--keep-static": a.Rip.KeepStatic = true; break;
@@ -190,6 +236,8 @@ Other:
                     case "--pack": a.Rip.PackSize = Math.Max(0, int.Parse(Next("--pack"))); break;
                     case "--export-model": a.ExportModel = true; break;
                     case "--no-textures": a.NoTextures = true; break;
+                    case "--no-rig": a.NoRig = true; break;
+                    case "--skip-existing": a.SkipExisting = true; break;
                     case "--no-fbx-fix": a.Rip.NoFbxFix = true; break;
                     case "--quiet": a.Rip.Quiet = true; break;
                     case "--rescan": a.Rescan = true; break;
@@ -205,7 +253,14 @@ Other:
                         if (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
                             a.ListModelsFilter = args[++i];
                         break;
-                    case "-h": case "--help": Console.WriteLine(Usage); return 0;
+                    case "-h": case "--help":
+                        Console.WriteLine($"foxanimrip {AppVersion.Current}");
+                        Console.WriteLine();
+                        Console.WriteLine(Usage);
+                        return 0;
+                    case "-V": case "--version":
+                        Console.WriteLine(AppVersion.Current);
+                        return 0;
                     default: throw new ArgumentException($"unknown option '{args[i]}'");
                 }
             }
@@ -226,6 +281,11 @@ Other:
             Console.WriteLine("dictionaries: " + Paths.DictStaging);
             return 0;
         }
+
+        // First line of every run, on stderr so it never pollutes a piped list.
+        // Terminal output gets pasted into bug reports without the build number
+        // otherwise, and "which copy were you running?" is the first question.
+        Log($"foxanimrip {AppVersion.Current}");
 
         try
         {
@@ -305,6 +365,40 @@ Other:
         // Browsing animation archives does not need a character chosen: these
         // are the commands for when you have the animations and are looking for
         // the model, rather than the other way round.
+        if (a.RipVariations.Length > 0)
+        {
+            if (a.Rip.OutDir.Length == 0)
+            {
+                Console.Error.WriteLine("! --rip-variations needs --out <folder>");
+                return 64;
+            }
+            catalog = OpenCatalog(root, profile, a.Rescan);
+            var dict = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(a.Fb))!, "dict");
+            var got = VariationRip.Run(catalog, a.RipVariations, a.Rip.OutDir,
+                                       archives, dict, Log);
+            return got.Variations > 0 ? 0 : 3;
+        }
+
+        if (a.AllSets)
+        {
+            if (a.Rip.OutDir.Length == 0)
+            {
+                Console.Error.WriteLine("! --all-sets needs --out <folder>");
+                return 64;
+            }
+            catalog = OpenCatalog(root, profile, a.Rescan);
+            return AllSets(a, catalog, archives);
+        }
+
+        if (a.DumpMog.Length > 0)
+        {
+            catalog = OpenCatalog(root, profile, a.Rescan);
+            return DumpMog(catalog, a.DumpMog);
+        }
+
+        if (a.ExtHistogram.Length > 0)
+            return ExtHistogramCmd(archives, a.ExtHistogram);
+
         if (a.ListSets || a.ListClips.Length > 0 || a.ForMtar.Length > 0
             || a.ListGrids.Length > 0 || a.Inventory.Length > 0)
         {
@@ -367,7 +461,12 @@ Other:
         }
 
         // -- rig and help bones, per character
-        foreach (var context in contexts)
+        //
+        // Skipped wholesale with --no-rig: a model-only export never plays a
+        // clip, and the rig search is by far the slowest step for a model the
+        // cache has not seen. 177 gear pieces at a full archive walk each is
+        // hours of work for rigs that gear does not have.
+        foreach (var context in a.NoRig ? Enumerable.Empty<ModelContext>() : contexts)
         {
             var frdv = a.FrdvPath.Length > 0 ? File.ReadAllBytes(a.FrdvPath) : null;
 
@@ -385,7 +484,12 @@ Other:
             }
         }
 
-        if (a.Rip.OutDir.Length == 0 && !a.Rip.ListOnly)
+        // --list-mtars and --why-mtar are answered below and write nothing, so
+        // they must not be stopped here for lacking an export folder. That
+        // happened: a --why-mtar run got as far as printing its rig line, then
+        // died on "--out is required" for an export it was never going to do.
+        var writesNothing = a.ListMtars || a.WhyMtar.Length > 0;
+        if (a.Rip.OutDir.Length == 0 && !a.Rip.ListOnly && !writesNothing)
         {
             Console.Error.WriteLine("! --out <folder> is required");
             return 64;
@@ -395,21 +499,65 @@ Other:
         if (a.ExportModel)
         {
             var dictDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(a.Fb))!, "dict");
-            foreach (var context in contexts)
+            // One archive index for the whole batch: opening the archives per
+            // model made a 20-model batch pay the same startup cost 20 times.
+            FoxBrowser.Rendering.FoxAssets shared = null;
+            if (!a.NoTextures && contexts.Count > 1)
             {
-                var dir = contexts.Count > 1
-                    ? Path.Combine(a.Rip.OutDir, RipJob.Safe(context.Name))
-                    : a.Rip.OutDir;
                 try
                 {
-                    ModelExport.Run(context, dir, archives, dictDir,
-                                    withTextures: !a.NoTextures, withSource: true, Log);
+                    // With texture archives, so streamed high-res mips assemble.
+                    var withTex = archives.Concat(GameFinder.TextureArchivesIn(archives))
+                                          .Distinct(StringComparer.OrdinalIgnoreCase);
+                    shared = FoxBrowser.Rendering.FoxAssets.Open(dictDir, withTex);
+                    shared.BuildIndex();
                 }
-                catch (Exception ex)
+                catch { shared = null; }
+            }
+            try
+            {
+                foreach (var context in contexts)
                 {
-                    Log($"! {context.Name}: model export failed ({ex.Message})");
+                    var dir = contexts.Count > 1
+                        ? Path.Combine(a.Rip.OutDir, RipJob.Safe(context.Name))
+                        : a.Rip.OutDir;
+                    // Skip a finished model -- but not one exported before the
+                    // texture-role sidecar existed. Re-exporting those (they have
+                    // an FBX and a textures folder but no _maps.tsv) is how a rip
+                    // picks up the sidecar the Blender add-on needs, without a
+                    // full from-scratch redo.
+                    if (a.SkipExisting && !a.NoTextures)
+                    {
+                        var stem = RipJob.Safe(context.Name);
+                        var fbx = File.Exists(Path.Combine(dir, stem + ".fbx"));
+                        var texDir = Path.Combine(dir, context.Name + "_textures");
+                        var hasTex = Directory.Exists(texDir);
+                        var hasSidecar = File.Exists(Path.Combine(dir, context.Name + "_maps.tsv"));
+                        if (fbx && (!hasTex || hasSidecar))
+                        {
+                            Log($"  {context.Name}: already exported, skipped");
+                            continue;
+                        }
+                    }
+                    else if (a.SkipExisting
+                        && File.Exists(Path.Combine(dir, RipJob.Safe(context.Name) + ".fbx")))
+                    {
+                        Log($"  {context.Name}: already exported, skipped");
+                        continue;
+                    }
+                    try
+                    {
+                        ModelExport.Run(context, dir, archives, dictDir,
+                                        withTextures: !a.NoTextures, withSource: true, Log,
+                                        sharedAssets: shared);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"! {context.Name}: model export failed ({ex.Message})");
+                    }
                 }
             }
+            finally { shared?.Dispose(); }
             if (a.Mtars.Count == 0 && !a.All)
             {
                 Log("model(s) exported; no animations requested");
@@ -476,7 +624,8 @@ Other:
                 {
                     if (!seen.Add(hit.Name)) continue;
                     var captured = hit;
-                    sources.Add(new MtarSource(hit.Name, () => GameCatalog.Read(captured)));
+                    sources.Add(new MtarSource(hit.Name, () => GameCatalog.Read(captured),
+                                               captured.Path));
                 }
             }
 
@@ -486,7 +635,8 @@ Other:
                 {
                     if (!seen.Add(entry.Name)) continue;
                     var captured = entry;
-                    sources.Add(new MtarSource(entry.Name, () => GameCatalog.Read(captured)));
+                    sources.Add(new MtarSource(entry.Name, () => GameCatalog.Read(captured),
+                                               captured.Path));
                 }
             }
             return sources;
@@ -683,6 +833,402 @@ Other:
     }
 
     /// <summary>
+    /// Rip every animation archive in the game, each bound to the model whose
+    /// skeleton best fits it, laid out mirroring where each set lives in the
+    /// archives. This is the "no stone unturned" sweep: rather than pick one base
+    /// model and take only what fits it, it pairs every set with a compatible
+    /// skeleton and reports what it could not place.
+    ///
+    /// Every candidate model's skeleton is read once; each set is then assigned
+    /// to the single best-covering skeleton by bone overlap (ties go to the
+    /// leaner skeleton, the one built for that animation rather than a superset).
+    /// Sets that share no bones with any model -- typically ones addressing rig
+    /// units rather than bones -- are listed as uncovered rather than dropped
+    /// silently. A per-set coverage report is written next to the clips.
+    /// </summary>
+    private static int AllSets(Args a, GameCatalog catalog, IReadOnlyList<string> archives)
+    {
+        var minMatch = a.Rip.MinMatch;
+        var outDir = a.Rip.OutDir;
+        Directory.CreateDirectory(outDir);
+
+        // A re-run must not append to a previous run's index; start it clean.
+        var indexPath = Path.Combine(outDir, "index.tsv");
+        var reportPath = Path.Combine(outDir, "all-sets-report.tsv");
+        try { if (File.Exists(indexPath)) File.Delete(indexPath); } catch { }
+
+        // 1. Every candidate model's skeleton, read once. Character models by
+        //    default; --all-models widens to everything the game ships.
+        var pool = a.CharactersOnly ? catalog.CharacterModels : catalog.Models;
+        var seenModel = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var models = new List<(CatalogEntry Entry, HashSet<uint> Bones)>();
+        foreach (var entry in pool)
+        {
+            if (!seenModel.Add(entry.Stem)) continue;
+            try
+            {
+                var info = RipJob.Inspect(GameCatalog.Read(entry));
+                if (info.BoneCount > 0 && info.BoneHashes.Count > 0)
+                    models.Add((entry, info.BoneHashes));
+            }
+            catch { /* a model that will not parse cannot be the answer */ }
+        }
+        Log($"{models.Count} candidate skeleton(s) read"
+            + (a.CharactersOnly ? " (character models; --all-models widens this)" : ""));
+        if (models.Count == 0)
+        {
+            Console.Error.WriteLine("! no model skeletons could be read to bind animations to");
+            return 3;
+        }
+
+        // 2. Every animation archive, one copy each -- the highest patch layer.
+        var sets = catalog.Mtars
+            .GroupBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(m => m.Layer).First())
+            .OrderBy(m => m.Path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        Log($"{sets.Count} animation archive(s) to place");
+
+        var fingerprint = GameCatalog.FingerprintOf(archives);
+        var assigned = new Dictionary<string, List<CatalogEntry>>(StringComparer.OrdinalIgnoreCase);
+        var modelByStem = new Dictionary<string, CatalogEntry>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (e, _) in models) modelByStem[e.Stem] = e;
+
+        void AssignTo(string modelStem, CatalogEntry set)
+        {
+            if (!assigned.TryGetValue(modelStem, out var l)) assigned[modelStem] = l = new();
+            l.Add(set);
+        }
+        string Row(CatalogEntry s, object clips, int setBones, string model,
+                   int matched, int cov, string status)
+            => $"{s.Stem}\t{s.Path}\t{clips}\t{setBones}\t{model}\t{matched}\t{cov}%\t{status}";
+
+        var rows = new Dictionary<CatalogEntry, string>();
+        var deferred = new List<(CatalogEntry Set, int Clips, int Inter)>();
+
+        // 3. Phase 1 -- cheap. A set that carries a skeleton list matches a model
+        //    by bone-hash overlap. Rig-driven sets name rig units, not bones, so
+        //    they intersect nothing here; those are deferred to the rigged check.
+        var done = 0;
+        foreach (var set in sets)
+        {
+            if (++done % 100 == 0) Log($"  scanned {done}/{sets.Count}...");
+
+            byte[] bytes;
+            AnimSetInfo info;
+            try
+            {
+                bytes = GameCatalog.Read(set);
+                info = SetSurvey.Describe(bytes, set.Name, set.Path, set.ArchiveName);
+            }
+            catch
+            {
+                rows[set] = Row(set, "?", 0, "", 0, 0, "UNREADABLE");
+                continue;
+            }
+
+            string bestModel = null;
+            int bestMatched = 0, bestBones = int.MaxValue;
+            foreach (var (entry, bones) in models)
+            {
+                var matched = 0;
+                foreach (var h in info.BoneHashes) if (bones.Contains(h)) matched++;
+                if (matched > bestMatched
+                    || (matched == bestMatched && matched > 0 && bones.Count < bestBones))
+                {
+                    bestModel = entry.Stem;
+                    bestMatched = matched;
+                    bestBones = bones.Count;
+                }
+            }
+
+            if (bestModel is not null && bestMatched >= minMatch)
+            {
+                AssignTo(bestModel, set);
+                var cov = bestMatched * 100 / Math.Max(1, info.BoneHashes.Count);
+                rows[set] = Row(set, info.Clips, info.BoneHashes.Count, bestModel,
+                                bestMatched, cov, "assigned");
+            }
+            else
+            {
+                deferred.Add((set, info.Clips, bestMatched));
+                rows[set] = Row(set, info.Clips, info.BoneHashes.Count, "", bestMatched,
+                                bestMatched * 100 / Math.Max(1, info.BoneHashes.Count),
+                                "UNCOVERED");
+            }
+        }
+        Log($"phase 1: {assigned.Values.Sum(v => v.Count)} placed by bone overlap, "
+            + $"{deferred.Count} need the rigged check");
+
+        // 4. Phase 2 -- rigged. The deferred sets are mostly rig-driven (player
+        //    and character motion). Build the skeletons the most models share --
+        //    the player/human rig ranks first -- resolve each rig once, then ask
+        //    each rigged model whether it can play the set, the same decode-and-
+        //    resolve the normal --all path uses. One shared rig cache serves every
+        //    game and motion, so the cold rig searches are paid once overall.
+        const int anchorCap = 16;
+        var built = new Dictionary<string, ModelContext>(StringComparer.OrdinalIgnoreCase);
+        if (deferred.Count > 0)
+        {
+            var anchors = SelectAnchors(models, fingerprint, anchorCap);
+            Log($"phase 2: rigging up to {anchors.Count} anchor skeleton(s) "
+                + $"to place {deferred.Count} deferred set(s)");
+            var anchorCtx = new List<ModelContext>();
+            foreach (var entry in anchors)
+            {
+                try
+                {
+                    var ctx = ModelContext.Create(entry.Stem, GameCatalog.Read(entry));
+                    var (choice, frdv) = RigCache.Resolve(archives, fingerprint, entry.Stem,
+                                                          ctx.BoneHashes, "", _ => { });
+                    ctx.Attach(choice, frdv);
+                    anchorCtx.Add(ctx);
+                    built[entry.Stem] = ctx;
+                    Log($"  anchor ready: {entry.Stem} ({ctx.BoneCount} bones)");
+                }
+                catch (Exception ex) { Log($"  ! anchor {entry.Stem}: {ex.Message}"); }
+            }
+
+            var placed2 = 0;
+            var chec01 = 0;
+            foreach (var (set, clips, inter) in deferred)
+            {
+                if (++chec01 % 50 == 0) Log($"  rigged-checked {chec01}/{deferred.Count}...");
+                byte[] bytes;
+                try { bytes = GameCatalog.Read(set); } catch { continue; }
+
+                string bestModel = null;
+                var bestMatched = inter;
+                foreach (var ctx in anchorCtx)
+                {
+                    MtarMatch match;
+                    try { match = ctx.Check(bytes, minMatch); } catch { continue; }
+                    if (match.MatchedBones > bestMatched)
+                    { bestModel = ctx.Name; bestMatched = match.MatchedBones; }
+                    if (match.MatchedBones >= minMatch)
+                    { bestModel = ctx.Name; bestMatched = match.MatchedBones; break; }
+                }
+
+                if (bestModel is not null && bestMatched >= minMatch)
+                {
+                    AssignTo(bestModel, set);
+                    rows[set] = Row(set, clips, 0, bestModel, bestMatched, 0, "assigned (rig)");
+                    placed2++;
+                }
+                else
+                {
+                    var why = bestMatched > 0 ? $"best {bestMatched} < min {minMatch}"
+                                              : "no model can play it";
+                    rows[set] = Row(set, clips, 0, "", bestMatched, 0, $"UNCOVERED: {why}");
+                }
+            }
+            Log($"phase 2: {placed2} more set(s) placed");
+        }
+
+        // 5. Coverage report, in archive order.
+        var report = new List<string>
+            { "mtar\tpath\tclipsInSet\tsetBones\tmodel\tmatchedBones\tcoverage\tstatus" };
+        foreach (var set in sets)
+            if (rows.TryGetValue(set, out var r)) report.Add(r);
+        File.WriteAllLines(reportPath, report);
+        var totalAssigned = assigned.Values.Sum(v => v.Count);
+        Log($"{totalAssigned} set(s) assigned to {assigned.Count} skeleton(s), "
+            + $"{sets.Count - totalAssigned} uncovered -- see all-sets-report.tsv");
+
+        // 6. Rip. One model at a time, all its sets, into the shared origin tree.
+        a.Rip.Tree = true;
+        a.Rip.IndexAppend = true;
+        var totalExported = 0;
+        var mi = 0;
+        foreach (var pair in assigned.OrderBy(k => k.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            mi++;
+            var modelStem = pair.Key;
+            var list = pair.Value;
+            Log($"--- {modelStem}: {list.Count} set(s)  ({mi} of {assigned.Count}) ---");
+
+            if (!built.TryGetValue(modelStem, out var context))
+            {
+                try
+                {
+                    context = ModelContext.Create(modelStem, GameCatalog.Read(modelByStem[modelStem]));
+                    var (choice, frdv) = RigCache.Resolve(archives, fingerprint, modelStem,
+                                                          context.BoneHashes, "",
+                                                          msg => Log($"  {modelStem}: {msg}"));
+                    context.Attach(choice, frdv);
+                    built[modelStem] = context;
+                }
+                catch (Exception ex)
+                {
+                    Log($"! {modelStem}: could not prepare its rig ({ex.Message}); its sets are skipped");
+                    continue;
+                }
+            }
+
+            var input = context.ToInput();
+            foreach (var set in list)
+            {
+                var captured = set;
+                input.Sources.Add(new MtarSource(captured.Name,
+                    () => GameCatalog.Read(captured), captured.Path));
+            }
+
+            var one = RipJob.Run(input, a.Rip, Log);
+            totalExported += one.Exported;
+        }
+
+        Log($"all-sets done: {totalExported} clip(s) into {outDir}");
+        Log($"coverage report: {reportPath}");
+        return totalExported > 0 ? 0 : 3;
+    }
+
+    /// <summary>
+    /// The skeletons to rig-resolve for the rigged compatibility check, best
+    /// first. Models are grouped by their exact skeleton; each group's
+    /// representative is the richest model in it. Groups are ordered so the ones
+    /// whose rig is already cached come first (cheap), then the ones the most
+    /// models share -- which puts the player/human skeleton near the top, since
+    /// most character models use it -- then the richest. Capped, because each
+    /// uncached rig means an archive walk.
+    /// </summary>
+    private static List<CatalogEntry> SelectAnchors(
+        List<(CatalogEntry Entry, HashSet<uint> Bones)> models, string fingerprint, int cap)
+    {
+        var groups = new Dictionary<string, (CatalogEntry Rep, int RepBones, int Count)>();
+        foreach (var (entry, bones) in models)
+        {
+            var sig = SkeletonSig(bones);
+            if (groups.TryGetValue(sig, out var g))
+            {
+                g.Count++;
+                if (bones.Count > g.RepBones) { g.Rep = entry; g.RepBones = bones.Count; }
+                groups[sig] = g;
+            }
+            else groups[sig] = (entry, bones.Count, 1);
+        }
+
+        return groups.Values
+            .OrderByDescending(g => RigCache.Load(g.Rep.Stem, fingerprint) is not null)
+            .ThenByDescending(g => g.Count)
+            .ThenByDescending(g => g.RepBones)
+            .Take(cap)
+            .Select(g => g.Rep)
+            .ToList();
+    }
+
+    /// <summary>A stable key for a skeleton: its sorted bone hashes, hashed.</summary>
+    private static string SkeletonSig(HashSet<uint> bones)
+    {
+        var arr = new uint[bones.Count];
+        bones.CopyTo(arr);
+        Array.Sort(arr);
+        var hc = new HashCode();
+        hc.Add(arr.Length);
+        foreach (var h in arr) hc.Add(h);
+        return hc.ToHashCode().ToString();
+    }
+
+    /// <summary>Fox path-hash extension codes to names, for the histogram diag.</summary>
+    private static readonly Dictionary<uint, string> ExtNames = new()
+    {
+        [71] = "gskl", [239] = "qar", [479] = "phsd", [562] = "evf", [685] = "ftex",
+        [783] = "lani", [796] = "lua", [1172] = "geom", [1591] = "fox", [1682] = "sim",
+        [1752] = "bnk", [2276] = "frig", [2311] = "aib", [2481] = "vfxdata", [2609] = "fox2",
+        [2629] = "fpk", [3035] = "des", [3089] = "fv2", [3131] = "fsm", [3296] = "mtar",
+        [3527] = "spch", [3609] = "json", [3832] = "subp", [4235] = "fova", [4244] = "fmdl",
+        [4752] = "mog", [5180] = "nta", [5387] = "clo", [5527] = "ph", [5533] = "xml",
+        [5719] = "txt", [5727] = "pftxs", [5785] = "fclo", [5980] = "sbp", [6407] = "sani",
+        [6588] = "frdv", [6589] = "lng", [6686] = "aig", [7164] = "htre", [7189] = "parts",
+        [7314] = "tgt", [7347] = "ftexs", [7359] = "gpfp", [7415] = "fsml", [7594] = "fpkd",
+        [7684] = "nav2", [7741] = "lba", [8069] = "mas", [8074] = "gani",
+    };
+
+    /// <summary>
+    /// What file types the archives actually hold, by extension code (the top
+    /// bits of each entry's path hash). A diagnostic: it settles whether a given
+    /// extension -- .mog above all -- is present at all, without any dictionary.
+    /// </summary>
+    private static int ExtHistogramCmd(IReadOnlyList<string> archives, string outFile)
+    {
+        var counts = new Dictionary<uint, int>();
+        var sample = new Dictionary<uint, string>();
+        var total = 0;
+        GameCatalog.WalkFileHashes(archives, (name, hash) =>
+        {
+            var ext = (uint)((hash >> 51) & 0x1FFF);
+            counts[ext] = counts.GetValueOrDefault(ext) + 1;
+            if (!sample.ContainsKey(ext)) sample[ext] = name;
+            total++;
+        });
+
+        var rows = new List<string> { "extCode\text\tcount\tsampleName" };
+        foreach (var kv in counts.OrderByDescending(k => k.Value))
+            rows.Add($"{kv.Key}\t{(ExtNames.TryGetValue(kv.Key, out var n) ? n : "?")}\t"
+                     + $"{kv.Value}\t{sample[kv.Key]}");
+        File.WriteAllLines(outFile, rows);
+
+        Log($"{total} file(s), {counts.Count} distinct extension code(s) -> {outFile}");
+        Log($".mog (4752): {counts.GetValueOrDefault(4752u)}  |  "
+            + $".mas (8069): {counts.GetValueOrDefault(8069u)}  |  "
+            + $".fsm (3131): {counts.GetValueOrDefault(3131u)}  |  "
+            + $".fsml (7415): {counts.GetValueOrDefault(7415u)}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Extract every motion-graph (.mog) file and index them. These are the
+    /// blend/state logic behind locomotion; they are hash-named (in no
+    /// dictionary), so the catalogue finds them by extension code. The raw bytes
+    /// are saved so the format can be parsed properly, and a first-bytes/header
+    /// summary is written for each -- deliberately not over-interpreted here,
+    /// since the graph body format is only partly documented.
+    /// </summary>
+    private static int DumpMog(GameCatalog catalog, string outDir)
+    {
+        Directory.CreateDirectory(outDir);
+        var rawDir = Path.Combine(outDir, "raw");
+        Directory.CreateDirectory(rawDir);
+
+        var rows = new List<string>
+        {
+            "name\tsize\tarchive\tlayers\tgraphCount\tpad@26\tpad@28\tfirst32hex"
+        };
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var done = 0;
+
+        foreach (var e in catalog.Mogs.OrderByDescending(m => m.Layer))
+        {
+            byte[] b;
+            try { b = GameCatalog.Read(e); }
+            catch (Exception ex) { Log($"! {e.Name}: cannot read ({ex.Message})"); continue; }
+
+            var stem = RipJob.Safe(e.Stem);
+            var name = stem;
+            var i = 1;
+            while (!taken.Add(name)) name = $"{stem}-{i++}";
+            File.WriteAllBytes(Path.Combine(rawDir, name + ".mog"), b);
+
+            // Best-effort header read, reported not trusted: the exact offset of
+            // the 0xA7A7 padding marker disambiguates the header layout, so both
+            // candidate positions are printed for the real files to settle it.
+            var layers = b.Length > 24 ? b[24] : 0;
+            var graphs = b.Length >= 32 ? BitConverter.ToInt32(b, 28) : 0;
+            var pad26 = b.Length >= 28 && b[26] == 0xA7 && b[27] == 0xA7;
+            var pad28 = b.Length >= 30 && b[28] == 0xA7 && b[29] == 0xA7;
+            var hex = Convert.ToHexString(b.AsSpan(0, Math.Min(32, b.Length)));
+            rows.Add($"{e.Name}\t{b.Length}\t{e.ArchiveName}\t{layers}\t{graphs}\t"
+                     + $"{pad26}\t{pad28}\t{hex}");
+            done++;
+            if (done % 50 == 0) Log($"  {done} .mog extracted...");
+        }
+
+        File.WriteAllLines(Path.Combine(outDir, "mogs.tsv"), rows);
+        Log($"{done} motion-graph file(s) extracted to {rawDir}");
+        Log($"index: {Path.Combine(outDir, "mogs.tsv")}");
+        return done > 0 ? 0 : 3;
+    }
+
+    /// <summary>
     /// Write out everything the game has: models, textures, and the variations
     /// that change how a model looks.
     /// </summary>
@@ -714,6 +1260,15 @@ Other:
             Inventory.WriteRipScript(a.Inventory, catalog.ProfileId, catalog.Root, names);
         }
         catch (Exception ex) { Log("! could not write the rip script: " + ex.Message); }
+
+        // The navigable catalogue: same data, as one searchable HTML page with a
+        // built-in how-to. A normal output of every inventory run.
+        try
+        {
+            var gameName = GameProfile.ById(catalog.ProfileId).DisplayName;
+            CatalogHtml.Write(a.Inventory, catalog, gameName, Log);
+        }
+        catch (Exception ex) { Log("! could not write catalog.html: " + ex.Message); }
 
         Console.WriteLine();
         Console.WriteLine($"models.tsv          {counts.Models} model(s), "
@@ -814,7 +1369,11 @@ Other:
                                     + $"({p.ArchiveIndex + 1}/{p.ArchiveCount}) "
                                     + $"models={p.Models} anims={p.Mtars}");
         });
-        return GameCatalog.Open(root, profile, progress, rescan);
+        var catalog = GameCatalog.Open(root, profile, progress, rescan);
+        if (GameCatalog.Stale)
+            Log("the cached index predates a file type this version collects, "
+                + "so it was rebuilt once");
+        return catalog;
     }
 
     public static IEnumerable<(CatalogEntry Entry, MtarMatch Match)> CompatibleMtars(

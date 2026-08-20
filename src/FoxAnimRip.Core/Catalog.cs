@@ -85,14 +85,30 @@ public sealed class GameCatalog
     /// bucket would load an old cache, see it marked complete, and report the
     /// new list as legitimately empty.
     /// </summary>
-    public const int CurrentSchema = 2;
+    public const int CurrentSchema = 3;
 
-    public int Schema { get; set; } = CurrentSchema;
+    /// <summary>
+    /// Deliberately defaults to 0, not to <see cref="CurrentSchema"/>.
+    ///
+    /// An index written before this field existed has no such property in its
+    /// JSON, and the deserialiser leaves a missing property at whatever the
+    /// declaration initialises it to. Initialising it to the current schema
+    /// therefore made every old file claim to be current -- which is precisely
+    /// the staleness the field was added to catch. Only <see cref="Scan"/> sets
+    /// it, so anything that did not come from a real scan reads as 0 and is
+    /// rescanned.
+    /// </summary>
+    public int Schema { get; set; }
     public string Root { get; set; } = "";
     public string ProfileId { get; set; } = "custom";
     public string Fingerprint { get; set; } = "";
     public List<CatalogEntry> Models { get; set; } = new();
     public List<CatalogEntry> Mtars { get; set; } = new();
+
+    /// <summary>Motion-graph files. Never named in any dictionary, so they are
+    /// found by extension code (the top bits of each entry's path hash), not by
+    /// name -- this is the blend/state logic behind player locomotion.</summary>
+    public List<CatalogEntry> Mogs { get; set; } = new();
     public List<CatalogEntry> Rigs { get; set; } = new();
     public List<CatalogEntry> HelpBones { get; set; } = new();
 
@@ -128,10 +144,12 @@ public sealed class GameCatalog
     {
         var catalog = resume ?? new GameCatalog
         {
+            Schema = CurrentSchema,
             Root = root,
             ProfileId = profile?.Id ?? "custom",
             Fingerprint = FingerprintOf(archives),
         };
+        catalog.Schema = CurrentSchema;      // a resumed index is being extended
         var done = new HashSet<string>(catalog.Scanned, StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < archives.Count; i++)
@@ -173,6 +191,55 @@ public sealed class GameCatalog
     private static int ByName(CatalogEntry a, CatalogEntry b) =>
         string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Walk every file entry across a set of archives, handing the callback each
+    /// file's name and its 64-bit path hash. A diagnostic hook: the top bits of
+    /// the hash are the extension code, so this is how we see what file types an
+    /// install actually contains without depending on any dictionary.
+    /// </summary>
+    public static void WalkFileHashes(IEnumerable<string> archives,
+                                      Action<string, ulong> onFile,
+                                      CancellationToken token = default)
+    {
+        foreach (var archive in archives)
+        {
+            token.ThrowIfCancellationRequested();
+            FoxArchive handle = null;
+            try { handle = FoxArchive.Open(archive); }
+            catch { continue; }
+            try { WalkHashes(handle, "", onFile, token); }
+            catch (OperationCanceledException) { throw; }
+            catch { }
+            finally { handle.Dispose(); }
+        }
+    }
+
+    private static void WalkHashes(FoxArchive archive, string dir,
+                                   Action<string, ulong> onFile, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        IReadOnlyList<FoxItem> items;
+        try { items = archive.List(dir); }
+        catch { return; }
+
+        foreach (var item in items)
+        {
+            var path = dir.Length == 0 ? item.Name : dir + "/" + item.Name;
+            if (!item.IsFolder)
+                onFile(item.Name, item.PathHash);
+            if (item.IsFolder)
+                WalkHashes(archive, path, onFile, token);
+            else if (item.IsArchive && !IsLeafArchive(item.Name))
+            {
+                FoxArchive nested = null;
+                try { nested = archive.OpenNested(path); } catch { }
+                if (nested is null) continue;
+                try { WalkHashes(nested, "", onFile, token); }
+                finally { nested.Dispose(); }
+            }
+        }
+    }
+
     private void WalkInto(FoxArchive archive, string rootPath, List<string> chain,
                           string dir, CancellationToken token)
     {
@@ -188,6 +255,10 @@ public sealed class GameCatalog
             if (!item.IsFolder)
             {
                 var target = Bucket(item.Name);
+                // .mog files are hash-named (in no dictionary), so bucket by the
+                // extension code carried in the top bits of the path hash.
+                if (target is null && ((item.PathHash >> 51) & 0x1FFF) == MogExtCode)
+                    target = Mogs;
                 target?.Add(new CatalogEntry
                 {
                     Name = item.Name,
@@ -220,6 +291,9 @@ public sealed class GameCatalog
             }
         }
     }
+
+    /// <summary>Fox path-hash extension code for <c>.mog</c> (motion graph).</summary>
+    private const ulong MogExtCode = 4752;
 
     /// <summary>An .mtar reports as an archive but we want it as a file.</summary>
     private static bool IsLeafArchive(string name) =>
@@ -269,6 +343,10 @@ public sealed class GameCatalog
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    /// <summary>Set when a cached index was rejected for being an older shape,
+    /// so the caller can explain the unexpected rescan.</summary>
+    public static bool Stale { get; private set; }
+
     public static string CacheDir => Paths.CatalogCache;
 
     /// <summary>Size + timestamp of every archive: changes when the game does.</summary>
@@ -304,7 +382,9 @@ public sealed class GameCatalog
             if (catalog is null || catalog.Fingerprint != fingerprint) return null;
             // An index written before a bucket existed is not wrong, just
             // incomplete in a way it cannot report. Rescan instead.
-            return catalog.Schema == CurrentSchema ? catalog : null;
+            if (catalog.Schema == CurrentSchema) return catalog;
+            Stale = true;
+            return null;
         }
         catch { return null; }
     }

@@ -3,6 +3,497 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## add-on [1.3.15] - 2026-08-20
+
+### Changed
+
+- **Model Browser list: restored the two-column layout** — icon + model name
+  flush left, description right-justified. The row had been built with
+  `align=True`, which joins the two sub-columns and packs them together on the
+  left, bunching the description up behind the name; a plain distributing row
+  puts each column back at its intended edge. Tool binaries are unchanged
+  (1.18.6); the add-on versions independently.
+
+## [1.18.6] - 2026-08-20
+
+### Added
+
+- **`--ext-histogram`: what file types an install actually holds**, counted by
+  extension code (the top bits of each entry's path hash), no dictionary needed.
+  Built to settle the motion-graph hunt: it confirmed MGSV / MGO / GZ / Survive
+  ship **no `.mog` files at all** (0 across ~963k files) — the motion-graph blend
+  logic is compiled into the engine, not shipped as data. `.mog`/`.mas`/`.fsml`
+  are absent; the `.fsm` present are cutscene data, not locomotion.
+- **`--dump-mog`** (1.18.4) stays as a general tool: it finds motion-graph files
+  by extension code where a Fox game does ship them.
+
+## [1.18.5] - 2026-08-20
+
+### Fixed
+
+- **`--measure`, `--locomotion`/`--grid` now actually apply in a batch.** The
+  per-character options the batch runner builds didn't copy the clip `Filters`,
+  `GridOnly` or the new `Measure` flag, so `--measure` fell through to a normal
+  FBX rip and `--locomotion`/`--grid` were ignored (every clip exported). All
+  three now carry through, so measuring writes `locomotion-params.tsv` and the
+  locomotion filters select what they say.
+
+## [1.18.4] - 2026-08-20
+
+### Added
+
+- **`--dump-mog`: extract the motion-graph (.mog) files** — the blend/state logic
+  behind player locomotion, and the flagship piece for a 1:1 movement rebuild.
+  `.mog` files are hash-named and in no dictionary, so the catalogue now finds
+  them by extension code (the top bits of each archive entry's path hash) rather
+  than by name. The command saves the raw files and writes `mogs.tsv` with a
+  header summary per file. The graph body format is only partly documented, so
+  this deliberately extracts and summarises rather than over-interpreting — the
+  real files are what the full parser gets built against. Catalogue schema bumped
+  to 3 (first run rescans).
+
+## [1.18.3] - 2026-08-20
+
+### Added
+
+- **`--measure`: authored locomotion parameters, no FBX.** For each clip it bakes
+  the travelling root and writes `locomotion-params.tsv` — per clip the root's
+  travel distance (m), speed (m/s), net turn (deg) and turn rate (deg/s), plus
+  frames/fps. These are the real, measured numbers a 1:1 movement rebuild needs
+  (walk/run/crouch/sprint speeds, turn rates), read straight off the animation
+  data rather than guessed. Pair it with `--character <base> --mtar <set>` or
+  `--all`, and `--locomotion`/`--grid` to focus on the movement clips.
+
+## [1.18.2] - 2026-08-19
+
+### Fixed
+
+- **catalog.html now categorises heads correctly.** `hd[fm]*` is worn headgear
+  (helmets, masks, hats), not the head itself — it was filed under "Head." The
+  real head/face models are the avatar presets `av[mf]N_typeN_def` (eyes, mouth,
+  skin, bandanna; type0–7 are different faces), and `av[mf]N_bodyN` is the base
+  body. The catalog now classifies from the model name — Head, Headgear, Base
+  body, Arms, Legs, Body, Chest rig, Hair — instead of only the rip folder, so
+  searching a category returns what it says. (The Blender add-on's Model Browser
+  gets the same fix in add-on 1.3.9.)
+
+## [1.18.1] - 2026-08-18
+
+### Fixed
+
+- **`--all-sets` now finds rig-driven animation sets — the player and character
+  motion.** 1.18.0 assigned each set to a model by intersecting the set's bone
+  table with the model's, which is empty for a rig-driven archive: those name rig
+  units, not bones. So the biggest sets in the game — `player2_resident` (1,285
+  clips), `mgoplayer_resident` (2,407) and every other player/character motion
+  set — matched nothing and were reported UNCOVERED, and a full three-game sweep
+  came out at a few hundred clips instead of tens of thousands. The sweep now runs
+  in two phases: the fast bone-overlap pass places sets that carry a skeleton
+  list, then a second pass rig-resolves the skeletons the most models share (the
+  player/human rig ranks first) and asks each rigged model whether it can play the
+  deferred sets — the same decode-and-resolve the normal `--all` path uses. The
+  shared rig cache means the cold rig searches are paid once across all six game/
+  motion runs. `all-sets-report.tsv` marks rig-placed sets `assigned (rig)`.
+
+## [1.18.0] - 2026-08-18
+
+### Added
+
+- **`--all-sets`: rip every animation archive in the game in one pass.** No
+  character needed. Every model's skeleton is read once, then each animation
+  archive is bound to the single skeleton that best fits it (ties go to the
+  leaner skeleton, the one built for that animation rather than a superset).
+  `--all-models` widens the candidate skeletons past character models to
+  everything the game ships — vehicles, gear, creatures — so nothing is left out
+  for want of a hand-picked base model. A set that shares no bones with any model
+  (typically one addressing rig units rather than bones) is written to the
+  coverage report as UNCOVERED rather than dropped silently.
+- **`--tree`: lay clips out mirroring their origin path.** Instead of a flat
+  `<out>/<mtar>/<clip>.fbx`, clips land under the folder chain the set lives in
+  inside the archives: `<out>/Assets/.../<mtar>/<clip>.fbx`. Implied by
+  `--all-sets`. `index.tsv` gains a `sourcePath` column in every mode, and
+  `--all-sets` also writes `all-sets-report.tsv` — one row per set with the model
+  used, bones matched, coverage, and placement status.
+- **`test-rip-all-anims.bat`**: rips all three games, both motions (in-place and
+  root-motion), one FBX per clip, into an origin-mirrored tree with a rolled-up
+  coverage summary. Logs to `test-logs\8*-allanims-*.log`.
+
+### Fixed
+
+- **Root motion was silently dropped from every command-line rip.** The per-model
+  options the batch runner built copied most settings but not `RootMotion`, so a
+  `--root-motion` run baked in place like any other — the "travelling" folders
+  the export bats produce were identical to the in-place ones. The batch now
+  carries root motion (and the new tree/append options) through.
+
+## [1.17.4] - 2026-08-18
+
+### Fixed
+
+- **Hash-named textures (avatar heads, hair, some Survive parts) now export at
+  full resolution too.** 1.17.3 assembled streamed mips only when a texture's
+  path resolved, because the assembler was fed the file through its resolved
+  directory. Hex/hash-named textures — the ones whose paths don't resolve, which
+  is exactly the head and hair textures on MGO avatars — fell straight through to
+  the 512 px inline image. The full-res path now pulls a texture's source files
+  by hash (`FtexSourceFiles`), including every streamed `.ftexs` companion, and
+  assembles them from memory with no dependence on the path resolving. The old
+  path-based assembly stays as a fallback. Delete the output folder and re-run to
+  pick up the higher-resolution heads (the `(up to Npx)` log line shows the
+  largest edge written).
+
+## [1.17.3] - 2026-08-18
+
+### Fixed
+
+- **The full-resolution texture fix now actually has the data to work with.**
+  1.17.2 assembled streamed mips through FoxBrowser's `FtexAssembleCore`, but the
+  `texture*` archives that hold those streamed mips were being excluded from the
+  archive set (they are skipped to keep the index fast, since they hold no models
+  or animation). So there was nothing to assemble and textures stayed at 512 or
+  less. The model, batch and variation texture paths now add the texture archives
+  back on top of the useful set before decoding, and each model logs the largest
+  texture edge it wrote (`... (up to 2048px)`) so a run shows whether the high
+  mips came through. Animation indexing still skips the texture archives, so it is
+  no slower.
+
+  To pick up the higher-resolution textures on models already ripped, delete the
+  output folder and re-run — the models have their sidecar now, so `--skip-existing`
+  would otherwise leave them as they are.
+
+## [1.17.2] - 2026-08-18
+
+### Fixed
+
+- **Textures now export at full resolution.** A Fox Engine `.ftex` holds only the
+  lower mips inline; the high-resolution mips are streamed in numbered `.ftexs`
+  companion files. The exporter was decoding the inline part only, so Survive
+  characters came out at 512 px or smaller. It now assembles the streamed mips
+  through FoxBrowser's own `FtexAssembleCore`, reading the companions out of the
+  archives, and falls back to the inline image only when a texture has no
+  streamed part or its path is unresolved (hash-named). Re-rip to pick up the
+  higher-resolution textures.
+
+## [1.17.1] - 2026-08-18
+
+### Fixed
+
+- **Model export now writes a texture-role sidecar (`<name>_maps.tsv`)** so the
+  Blender add-on can wire the spec/roughness map and hash-named normals. Fox
+  Engine only references the base and normal maps in the FBX, and a texture whose
+  source path was unresolved comes out hash-named — so a material built from
+  shared, unresolved textures (common on Survive gear) lost the roles of its
+  normal and spec maps at import. The sidecar records base → normal → spec per
+  material, keyed by the base file both sides can see.
+- **`--skip-existing` re-exports a model that predates the sidecar** — one with an
+  FBX and a textures folder but no `_maps.tsv` — so re-running a rip picks up the
+  sidecar without a full from-scratch redo. Models with no textures are still
+  skipped.
+
+## [1.17.0] - 2026-08-18
+
+### Added
+
+- **`--inventory` now writes `catalog.html`** — a single searchable page of every
+  model and animation archive in the game, grouped by category with a
+  plain-language description for each, plus a built-in "How to use" tab covering
+  the assemble-a-character workflow, locomotion export, and customisation-texture
+  ripping. It is generated from the same inventory data, so the navigable
+  catalogue is a normal output of the tool rather than something built by hand.
+  Character codes are translated where known (Snake, Quiet, Miller, the Survive
+  cast, the MGO classes); gear and parts are described by function.
+
+## Blender add-on 1.3.7 - 2026-08-18
+
+### Fixed
+
+- **Add to Active Character no longer breaks a part's materials.** The assembler
+  imported parts with a plain FBX import, so an added part got flat materials with
+  no srm and no DXT5nm normal handling — while the *same* model imported on its
+  own looked right. Added parts now get the full material rebuild (normals, srm
+  split, role sidecar), so an assembled character matches a standalone import.
+
+### Added
+
+- **Category and Gender filters in the Model Browser**, beside the game filter.
+  Category is built from what the scan finds (Head, Hair, Arms, Legs, Upper
+  armor, Chest, Base body, Headgear, Eyewear, …) so heads, hair and eyewear are
+  one dropdown away instead of buried in hundreds of models. Gender is Male /
+  Female / Unisex, read from the model name.
+- Hair is its own category now, and base bodies (`bsm`/`bsf`/`skl`) group under
+  "Base body". The browser's folder field is worded for any folder — it never
+  needed to be called "rips"; the scan walks whatever folder you point it at.
+
+### Fixed
+
+- **Normal and spec maps now load correctly on Survive gear.** A material whose
+  textures came out hash-named (shared, unresolved textures) had its normal map
+  loaded as **sRGB** instead of Non-Color — wrecking the normals — because colour
+  space was decided from the file name's `_nrm`/`_srm` suffix, which a hash name
+  does not have. Colour space now follows the map's role, so a normal identified
+  through the FBX link loads Non-Color regardless of its name.
+- **Spec/roughness (srm) maps now wire up** even when hash-named. The add-on reads
+  the tool's `<name>_maps.tsv` sidecar to find each material's normal and spec by
+  its base texture, so the roughness and specular that were silently missing on
+  hash-named materials come through. Re-rip Survive models (1.17.1) to generate
+  the sidecar; the colour-space fix needs no re-rip.
+
+## Blender add-on 1.3.5 - 2026-08-18
+
+### Added
+
+- **Model Browser** — the catalogue, inside Blender. Point it at a rips folder,
+  hit Scan, and every model becomes a searchable list with a plain-language
+  description, so "quiet", "arm female", "hat", "respirator" surfaces the right
+  file out of a folder of terse names. Filter by game, then **Import Selected**
+  (full FoxBrowser treatment) or **Add to Active Character** (onto the current
+  rig via the assembler). Animation packs are skipped; descriptions use the same
+  translation the tool's catalogue does, so no data file is needed.
+- **How to Assemble a Character** panel — the workflow steps in the sidebar, so
+  finding and combining models does not need the docs open.
+
+## Blender add-on 1.3.4 - 2026-08-18
+
+### Added
+
+- **Add Part(s) to Active Character** — the incremental assembly workflow. Import
+  a base body with Model(s), leave its armature selected, then add parts from any
+  folder, one file or many, running it again to add more. Each part's meshes move
+  onto the active rig. This replaces needing every file in one folder for a single
+  multi-select (the all-in-one *Assemble Character* is still there for when they
+  are together). Adding a part also un-hides the base body's own meshes, so a base
+  imported outside the add-on still shows up.
+
+## Blender add-on 1.3.3 - 2026-08-18
+
+### Added
+
+- **Assemble Character** (sidebar and File ▸ Import). Fox Engine builds a created
+  soldier — MGO's avatar, Survive's survivor — from a minimal base body plus
+  interchangeable parts (head, arms, legs, chest, armour, hats, hair), every one
+  rigged to the same player skeleton. This does the same: select a base and its
+  parts and it moves every part's meshes onto the base's rig, so the result is
+  one character on one armature, the way the game assembles it. The base is
+  detected by name (`bsm0`/`bsf0` for Survive, `skl0` for MGO) or chosen in the
+  dialog. Parts that carry bones the base lacks — a head's face bones — have
+  those bones merged across at their exact rest position (verified to 0.00 mm).
+  Ground Zeroes characters are single complete models, so selecting one just
+  imports it.
+
+  Works for all three games; audited against real rips: every part's vertex
+  groups map to a master-armature bone (nothing left un-deformable), no
+  duplicate bones, and a rendered survivor shows head, vest, arms and legs
+  landing in their correct places.
+
+- `scripts/assemble-character.py` — the same assembler from the command line, for
+  building characters in a loop: `blender --background --python
+  assemble-character.py -- --base bsm0…fbx --part hdm0…fbx --out char.blend`.
+
+## Blender add-on 1.3.2 - 2026-08-18
+
+### Fixed
+
+- **Imported models could show only their skeleton.** Fox Engine flags a model's
+  default-hidden mesh groups as invisible in the file — the created-soldier base
+  body (`bsm0_main0_def` / `bsf0_main0_def`) is the clearest case: in game it is
+  hidden and swapped out by equipped gear, so every one of its mesh groups ships
+  with visibility off. Blender's FBX importer honoured that and imported the mesh
+  hidden, so the viewport showed only bones while the geometry sat there unseen
+  (FoxBrowser ignores the flag and draws everything). The add-on now un-hides
+  every imported mesh, matching FoxBrowser. The geometry was never missing — only
+  hidden.
+
+## [1.16.3] - 2026-08-18
+
+### Fixed
+
+- **`--rip-variations` on Survive reported 662 files "unreadable"** where nothing
+  was actually lost. Survive's assembly variations (`arf0_main0_v00`) reference a
+  part model through a packed copy whose inner hash is not separately indexed, so
+  the raw read fails — but the part itself (`arf0_main0_def`) is a top-level model
+  exported by name. Those are now recognised against the catalogue and reported
+  as **part-model references**, with the real model named in `ripped-files.tsv`,
+  instead of counted as failures. The customisation textures — the actual point
+  of the rip — always decoded: 176 unique skin/detail textures across 1,306
+  references, zero of them affected.
+
+## [1.16.2] - 2026-08-18
+
+### Added
+
+- `scripts/test-survive-locomotion.bat` — the base player's locomotion for both
+  genders, in place and travelling. Built from the audit: the base skeletons are
+  `bsm0_main0_def` (male) and `bsf0_main0_def` (female) under
+  `Assets/ssd/chara/base`, and the player motion archive is `SsdPlayer_layers`
+  (3,220 clips), Survive's equivalent of TPP's `player2_resident`.
+- `scripts/test-rip-survive-chars.bat` — all 419 `Assets/ssd/chara` part and
+  character models (arm, leg, head, up_armor, chest_rig, body, hats, plus
+  bosses, zombies, kaiju, walker gear, NPCs), resumable and rig-skipping like
+  the MGO gear script, followed by the Survive customisation textures from
+  `ssd/fova/chara` — 8,287 variation rows, a far deeper character creator than
+  MGO's.
+
+### Fixed
+
+- **A Survive install read as "custom".** No executable in its Steam folder
+  matched, so detection fell through. `Identify` now falls back to the folder
+  name before giving up, so `METAL GEAR SURVIVE` is recognised as Survive.
+  Explicit `--game survive` always worked; this only fixes auto-detection and
+  the game picker label.
+
+## [1.16.1] - 2026-08-18
+
+### Changed
+
+- **Metal Gear Survive profile hardened for a real install.** Added the
+  all-caps `METAL GEAR SURVIVE` Steam folder name and the `MGSurvive.exe`
+  executable, and pointed the archive search at `master\` and `pack\` alongside
+  the root. The decoder was never the question — the tool drives FoxBrowser's
+  own `MtarAnimSet`, so anything FoxBrowser can browse in Survive, this can
+  export — but the profile now finds the install without a manual `--root`.
+  Survive's character models live under `Assets/ssd/chara`, which the existing
+  `/chara/` filter already treats as characters, so no code path assumed TPP
+  naming.
+- `scripts/test-survive-audit.bat` — a read-only pass that proves the tool
+  reads a Survive install and enumerates its models and animation archives, so
+  the rip scripts can name the real base skeleton and locomotion archive rather
+  than guess them.
+
+## [1.16.0] - 2026-08-17
+
+### Added
+
+- **`--no-rig`** — skip the rig search entirely. A model-only export never plays
+  a clip, yet every model the cache had not seen paid a full archive walk to
+  learn it has no rig — the slowest step of the gear rip by far, for an answer
+  gear was always going to give.
+- **`--skip-existing`** — with `--export-model`, characters whose FBX is already
+  in the output folder are skipped, so an interrupted batch resumes where it
+  stopped instead of repeating finished work.
+- `scripts/test-convert-png.bat` — a PNG beside every DDS, leaving the DDS
+  untouched as the authentic game data. Uses Microsoft's texconv (downloaded
+  once from the official DirectXTex releases if absent), which decodes every
+  format Fox Engine uses rather than guessing. Two-channel BC5 normal maps get
+  their blue channel reconstructed so they view correctly; everything else
+  converts plainly in its own colour space. Already-converted files are
+  skipped on re-runs.
+
+### Changed
+
+- Batch model exports open the game archives **once per batch** instead of once
+  per model — building that index cost more than ripping one model's textures,
+  and a 20-model batch was paying it 20 times.
+- `scripts/test-rip-mgo-gear.bat` regenerated to use all of the above; it is now
+  safe to stop and re-run at any point.
+
+## [1.15.1] - 2026-08-17
+
+### Fixed
+
+- **`--rip-variations` raw files overwrote each other.** A variation's model and
+  its physics file share a stem, and raw copies were named by stem alone — so
+  `tes1_main0_def.fmdl` and its `.sim` both became `tes1_main0_def.bin` and one
+  survived. The first real run lost about 40 files this way; the manifest's
+  distinct codes against fewer files on disk is what gave it away. Raw copies
+  now keep the real extension when the name resolves, and any remaining
+  collision gets a short code suffix rather than a silent overwrite.
+
+  The first run's counts were otherwise right: 626 avatar variations, 659 unique
+  files, 420 textures decoded to DDS, 0 unreadable — the multi-flavour code
+  handling held up against the real archives.
+
+### Added
+
+- `scripts/test-rip-mgo-gear.bat` — the other half of the avatar wardrobe: all
+  177 MGO equipment models (hats, chest gear, heads, glasses, suits and outfits
+  for every class and both genders, plus the three DLC gear sets), generated
+  from the inventory tables rather than picked by hand, followed by the DLC
+  gear's customisation textures from `tpp/fova/chara/dl*` — a folder the
+  avatar run's `mgo/fova/chara` filter did not cover.
+
+## [1.15.0] - 2026-08-17
+
+### Added
+
+- **`--rip-variations <filter>`** — extract the files form variations point at,
+  which is the missing half of the inventory. `variations.tsv` could say "this
+  skin tone swaps material slot X to texture #0" but nothing could pull texture
+  #0 out: model export only rips what a model's own materials reference, and a
+  variation's files are by definition not among those.
+
+  The stored references are 64-bit codes of more than one flavour (plain path
+  code, path code with the extension folded into the top bits, Ground Zeroes'
+  own name hash), so every entry is tried each way FoxBrowser can read a file:
+  as an ftex decoded to DDS first, then as a raw copy. `ripped-files.tsv` maps
+  every variation to its files — including the failures, because "this code
+  could not be read" is an answer too.
+
+  The reason this exists: the MGO avatar customisation set
+  (`Assets/mgo/fova/chara`) builds its five skin tones per garment per gender
+  entirely from texture swaps — real files, zero shader-value rows — and those
+  files were unreachable.
+
+- `scripts/test-rip-avatars.bat` — every MGO avatar asset unattended: all 45
+  player-relevant models (both avatar genders with all heads and hair, the skl0
+  base skeletons, the DLC characters, the customisation stage) plus the
+  customisation textures via `--rip-variations`, logged for reading.
+
+## [1.14.2] - 2026-08-17
+
+### Fixed
+
+- **`--why-mtar` demanded `--out`** and quit — after printing its rig line, so
+  the run looked half-successful. It and `--list-mtars` are diagnostics that
+  write nothing; the export-folder requirement now applies only to commands that
+  export. Caught by reading the logs of the first unattended `test-gather.bat`
+  run rather than by anyone at a keyboard.
+- **`--for-mtar` on a rig-driven archive could grind for hours in silence.**
+  When name-matching finds nothing it resolves candidates through their rigs,
+  and "checking the first 60" of 600 was still hours on a cold cache — each
+  unresolved rig means searching the archives. Over the cap it now checks only
+  models whose rigs are already remembered, names the count it skipped, and
+  tells you to narrow with `--model-filter` — an instant honest answer instead
+  of a bounded-looking one that never arrives.
+
+### Changed
+
+- `scripts/test-gather.bat` announces each step on the console as it goes. Its
+  first version redirected everything to the logs, so a run that was working
+  through fourteen slow steps was indistinguishable from a hung one.
+
+## [1.14.1] - 2026-08-17
+
+### Fixed
+
+- **`--inventory` reported `0 form-variation file(s) to read`** on a game full of
+  them. The schema guard added in 1.14.0 — whose entire job was to rescan an
+  index written before `.fv2` files were collected — did not work.
+
+  `public int Schema { get; set; } = CurrentSchema;` reads like a sensible
+  default. It is a trap: `System.Text.Json` leaves a property that is absent from
+  the JSON at whatever the declaration initialises it to. Every old cache has no
+  `Schema` property, so every old cache deserialised claiming to be current,
+  passed the guard, and was reused — which is precisely the staleness the field
+  was added to catch. The field now defaults to 0 and only a scan stamps it.
+
+  Anyone who ran 1.14.0 and saw no variations should just re-run; the index
+  rebuilds once, and says so.
+
+### Added
+
+- **`-V` / `--version`**, and the build number as the first line of every console
+  run. The window has shown its version since 1.11.0; the console tool showed
+  nothing, so pasted output could not be tied to a build.
+- `tests/index` — the cache-staleness rules, including the exact bug above. It
+  fails on the old declaration and passes on the new one, which is the only
+  reason to trust it.
+
+### Changed
+
+- One version number for the whole build, in `src/Directory.Build.props`. It was
+  previously set per project, which is how 1.12.1 shipped a console tool still
+  reporting 1.11.0.
+
 ## [1.14.0] - 2026-08-17
 
 ### Added

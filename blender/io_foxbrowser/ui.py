@@ -21,6 +21,13 @@ class FOXB_MT_import(bpy.types.Menu):
         layout.operator("foxbrowser.import_recursive",
                         text="Folder Tree (Recursive)...", icon='OUTLINER')
         layout.separator()
+        layout.operator("foxbrowser.add_parts",
+                        text="Add Part(s) to Active Character...",
+                        icon='ADD')
+        layout.operator("foxbrowser.assemble_character",
+                        text="Assemble Character (all files)...",
+                        icon='OUTLINER_OB_ARMATURE')
+        layout.separator()
         layout.operator("foxbrowser.import_animations",
                         text="Animations onto Armature...", icon='ANIM')
 
@@ -43,6 +50,33 @@ class FOXB_PT_sidebar(bpy.types.Panel):
                      text="Folder (Bulk)", icon='FILE_FOLDER')
         col.operator("foxbrowser.import_recursive",
                      text="Folder Tree", icon='OUTLINER')
+
+        layout.separator()
+        box = layout.box()
+        box.label(text="Assemble Character", icon='OUTLINER_OB_ARMATURE')
+        col = box.column(align=True)
+        col.scale_y = 1.15
+        # incremental workflow: base first, then add parts onto its armature
+        active_arm = (context.object is not None and context.object.type == 'ARMATURE') \
+            or any(o.type == 'ARMATURE' for o in context.selected_objects)
+        add = col.row(align=True)
+        add.enabled = active_arm
+        add.operator("foxbrowser.add_parts",
+                     text="Add Part(s) to Active Body", icon='ADD')
+        if not active_arm:
+            r = box.row()
+            r.scale_y = 0.8
+            r.label(text="1. import a base body, 2. select its armature",
+                    icon='INFO')
+        else:
+            r = box.row()
+            r.scale_y = 0.8
+            r.label(text="parts merge onto the selected rig", icon='CHECKMARK')
+        col2 = box.column(align=True)
+        col2.scale_y = 0.95
+        col2.operator("foxbrowser.assemble_character",
+                      text="All-in-one (base + parts together)",
+                      icon='FILE_3D')
 
         layout.separator()
         col = layout.column(align=True)

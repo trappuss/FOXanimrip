@@ -53,12 +53,32 @@ public sealed class RipOptions
     /// <summary>Export only clips that belong to a detected locomotion grid.</summary>
     public bool GridOnly;
 
+    /// <summary>
+    /// Lay clips out mirroring each set's origin path inside the game archives
+    /// (Assets/.../&lt;set&gt;/&lt;clip&gt;.fbx) rather than a flat &lt;set&gt;/ folder.
+    /// </summary>
+    public bool Tree;
+
+    /// <summary>
+    /// Append to index.tsv instead of truncating it. Used when several models
+    /// rip into one shared folder (the "rip every set" sweep), so each model's
+    /// clips add to the one index rather than clobbering it.
+    /// </summary>
+    public bool IndexAppend;
+
+    /// <summary>
+    /// Measure locomotion instead of exporting FBX: for each clip, the root's
+    /// travel distance, speed, net turn and turn rate go into
+    /// locomotion-params.tsv. The authored numbers a 1:1 movement rebuild needs.
+    /// </summary>
+    public bool Measure;
+
     /// <summary>Filled per archive when <see cref="GridOnly"/> is on.</summary>
     internal HashSet<string> GridMembers;
 }
 
 /// <summary>One animation archive to export from; bytes are fetched on demand.</summary>
-public sealed record MtarSource(string Name, Func<byte[]> Open);
+public sealed record MtarSource(string Name, Func<byte[]> Open, string SourcePath = "");
 
 public sealed class RipInput
 {
@@ -181,13 +201,18 @@ public static class RipJob
 
         var dedupe = o.Dedupe ? new ClipDedupe(o.DedupeRotation) : null;
 
+        var measureRows = new List<string>();
+
         StreamWriter index = null;
-        if (!o.ListOnly)
+        if (!o.ListOnly && !o.Measure)
         {
             Directory.CreateDirectory(o.OutDir);
             result.IndexPath = Path.Combine(o.OutDir, "index.tsv");
-            index = new StreamWriter(result.IndexPath, false, new UTF8Encoding(false));
-            index.WriteLine("mtar\tgani\tframes\tfps\tmatchedBones\tfile");
+            var freshIndex = !o.IndexAppend || !File.Exists(result.IndexPath)
+                             || new FileInfo(result.IndexPath).Length == 0;
+            index = new StreamWriter(result.IndexPath, o.IndexAppend, new UTF8Encoding(false));
+            if (freshIndex)
+                index.WriteLine("mtar\tgani\tframes\tfps\tmatchedBones\tfile\tsourcePath");
         }
 
         try
@@ -231,7 +256,10 @@ public static class RipJob
                 }
 
                 var stem = Path.GetFileNameWithoutExtension(source.Name);
-                var dir = o.ListOnly ? "" : Path.Combine(o.OutDir, Safe(stem));
+                var srcPath = source.SourcePath ?? "";
+                var dir = o.ListOnly ? ""
+                        : o.Tree ? Path.Combine(o.OutDir, TreeSubdir(srcPath, stem))
+                        : Path.Combine(o.OutDir, Safe(stem));
                 var madeDir = false;
                 var inThisMtar = 0;
                 // When packing, clips queue up here and are flushed as one file
@@ -263,6 +291,34 @@ public static class RipJob
                     var match = ResolveBest(anim, model, boneNameIndex, frig,
                                             out var drives, out var ikJobs);
                     if (match < o.MinMatch) { result.Skipped++; continue; }
+
+                    if (o.Measure)
+                    {
+                        // The travelling bake carries the root's real motion; the
+                        // in-place one would report zero for everything.
+                        ExportClip mclip;
+                        try
+                        {
+                            mclip = RootBake.FromGani(model, anim, "take", drives,
+                                                      ikJobs, frig, help, o.Fps, o.Step);
+                        }
+                        catch (Exception ex)
+                        {
+                            if (!o.Quiet) log($"! {stem}/{clipName}: measure failed ({ex.Message})");
+                            result.Failed++;
+                            continue;
+                        }
+                        var (dist, speed) = RootBake.Travel(mclip);
+                        var yaw = NetYaw(mclip);
+                        var secs = (mclip.FrameCount - 1) / MathF.Max(1e-3f, mclip.Fps);
+                        var turn = secs > 0 ? yaw / secs : 0f;
+                        measureRows.Add(
+                            $"{stem}\t{clipName}\t{mclip.FrameCount}\t{mclip.Fps:0.###}\t"
+                            + $"{dist:0.####}\t{speed:0.####}\t{yaw:0.##}\t{turn:0.##}\t{match}");
+                        result.Exported++;
+                        inThisMtar++;
+                        continue;
+                    }
 
                     if (o.ListOnly)
                     {
@@ -325,7 +381,7 @@ public static class RipJob
                                         + $"{scene.Clip.Fps:0.###}\t{match}\t");
                             if (pack.Count >= o.PackSize)
                                 FlushPack(dir, stem, ref packIndex, pack, pending, index,
-                                          o.OutDir, result, log);
+                                          o.OutDir, srcPath, result, log);
                         }
                         else
                         {
@@ -333,7 +389,8 @@ public static class RipJob
                             File.WriteAllBytes(file, bytes);
                             index!.WriteLine($"{stem}\t{clipName}\t{scene.Clip.FrameCount}\t"
                                              + $"{scene.Clip.Fps:0.###}\t{match}\t"
-                                             + Path.GetRelativePath(o.OutDir, file));
+                                             + Path.GetRelativePath(o.OutDir, file)
+                                             + "\t" + srcPath);
                             result.Files++;
                         }
                         result.Exported++;
@@ -349,7 +406,7 @@ public static class RipJob
 
                 if (o.PackSize > 0 && pack.Count > 0)
                     FlushPack(dir, stem, ref packIndex, pack, pending, index,
-                              o.OutDir, result, log);
+                              o.OutDir, srcPath, result, log);
 
                 if (inThisMtar > 0) log($"  {stem}: {inThisMtar} clip(s)");
                 if (o.Limit > 0 && result.Exported >= o.Limit) break;
@@ -359,6 +416,16 @@ public static class RipJob
         {
             index?.Flush();
             index?.Dispose();
+        }
+
+        if (o.Measure)
+        {
+            Directory.CreateDirectory(o.OutDir);
+            var mp = Path.Combine(o.OutDir, "locomotion-params.tsv");
+            var header = "mtar\tclip\tframes\tfps\tdistance_m\tspeed_mps\t"
+                       + "netYaw_deg\tturnRate_dps\tmatchedBones";
+            File.WriteAllLines(mp, new[] { header }.Concat(measureRows));
+            log($"measured {measureRows.Count} clip(s) -> {mp}");
         }
 
         result.Seconds = watch.Elapsed.TotalSeconds;
@@ -377,7 +444,8 @@ public static class RipJob
     private static void FlushPack(string dir, string stem, ref int packIndex,
                                   List<(string Take, byte[] Fbx)> pack,
                                   List<string> pending, StreamWriter index,
-                                  string outDir, RipResult result, Action<string> log)
+                                  string outDir, string srcPath, RipResult result,
+                                  Action<string> log)
     {
         if (pack.Count == 0) return;
         packIndex++;
@@ -388,7 +456,7 @@ public static class RipJob
             File.WriteAllBytes(file, FbxTakes.Pack(pack));
             result.Files++;
             var relative = Path.GetRelativePath(outDir, file);
-            foreach (var line in pending) index?.WriteLine(line + relative);
+            foreach (var line in pending) index?.WriteLine(line + relative + "\t" + srcPath);
         }
         catch (Exception ex)
         {
@@ -406,7 +474,7 @@ public static class RipJob
             }
             for (var i = 0; i < pending.Count && i < pack.Count; i++)
                 index?.WriteLine(pending[i] + Path.GetRelativePath(outDir,
-                    Path.Combine(dir, Safe(pack[i].Take) + ".fbx")));
+                    Path.Combine(dir, Safe(pack[i].Take) + ".fbx")) + "\t" + srcPath);
         }
         pack.Clear();
         pending.Clear();
@@ -479,12 +547,51 @@ public static class RipJob
         return i > 0 ? name[..i] : name;
     }
 
+    /// <summary>Net yaw (deg) the root turns through over a clip, wrapped to
+    /// [-180, 180]. Z is yaw in <see cref="RootBake"/>'s Euler convention.</summary>
+    private static float NetYaw(ExportClip clip)
+    {
+        if (clip.RotationEuler.Length == 0) return 0;
+        var root = clip.RotationEuler[0];
+        if (root is null || root.Length < 2) return 0;
+        var d = root[^1].Z - root[0].Z;
+        while (d > 180f) d -= 360f;
+        while (d < -180f) d += 360f;
+        return d;
+    }
+
     public static string Safe(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();
         var sb = new StringBuilder(name.Length);
         foreach (var c in name) sb.Append(invalid.Contains(c) ? '_' : c);
         return sb.Length == 0 ? "clip" : sb.ToString();
+    }
+
+    /// <summary>
+    /// A set's origin path turned into a folder chain: the directory the .mtar
+    /// lives in inside the archives, each segment made filename-safe, then a
+    /// folder named after the set itself. So
+    /// <c>Assets/tpp/chara/player/player2_resident.mtar</c> becomes
+    /// <c>Assets/tpp/chara/player/player2_resident/</c>, and the clips land under
+    /// it. With no origin path known (a loose .mtar on disk), just the set folder.
+    /// </summary>
+    public static string TreeSubdir(string sourcePath, string stem)
+    {
+        var safeStem = Safe(stem);
+        if (string.IsNullOrEmpty(sourcePath)) return safeStem;
+        var parts = sourcePath.Replace('\\', '/')
+                              .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var dirs = new List<string>();
+        // Every segment but the last (the file name); "." / ".." never escape.
+        for (var i = 0; i < parts.Length - 1; i++)
+        {
+            var seg = parts[i];
+            if (seg is "." or "..") continue;
+            dirs.Add(Safe(seg));
+        }
+        dirs.Add(safeStem);
+        return Path.Combine(dirs.ToArray());
     }
 }
 

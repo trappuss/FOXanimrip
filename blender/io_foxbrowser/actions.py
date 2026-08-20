@@ -11,9 +11,16 @@ how long a clip is and how much of the rig it drives before assigning it.
 
 from __future__ import annotations
 
+import time
+
 import bpy
 
 from . import slots
+
+# Double-click a clip row within this window to assign it (like the Model
+# Browser). One click just selects.
+_ACTION_DBLCLICK_S = 0.35
+_last_action_click = [-1, 0.0]   # [row index, monotonic time of last click]
 
 
 def clip_actions():
@@ -47,7 +54,14 @@ class FOXB_UL_actions(bpy.types.UIList):
                   active_prop, index):
         scene = context.scene
         row = layout.row(align=True)
-        row.label(text=item.name, icon='ACTION')
+        # Borderless operator so a click routes through the double-click handler;
+        # a second click assigns the clip. Left-aligned sub-row so the name hugs
+        # the icon instead of the operator button centring it.
+        name = row.row()
+        name.alignment = 'LEFT'
+        op = name.operator("foxbrowser.action_click", text=item.name,
+                           icon='ACTION', emboss=False)
+        op.index = index
 
         frames = int(item.get("fox_frames", 0) or 0)
         bones = int(item.get("fox_bones", 0) or 0)
@@ -99,6 +113,30 @@ def _target_armature(context):
         if candidate.type == 'ARMATURE':
             return candidate
     return None
+
+
+class FOXB_OT_action_click(bpy.types.Operator):
+    """Select this clip. Double-click to assign it to the selected armature"""
+    bl_idname = "foxbrowser.action_click"
+    bl_label = "Select / Assign Clip"
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+
+    index: bpy.props.IntProperty(default=-1)
+
+    def execute(self, context):
+        if not (0 <= self.index < len(bpy.data.actions)):
+            return {'CANCELLED'}
+        context.scene.foxb_action_index = self.index
+        now = time.monotonic()
+        prev_index, prev_t = _last_action_click
+        if prev_index == self.index and (now - prev_t) <= _ACTION_DBLCLICK_S:
+            _last_action_click[0], _last_action_click[1] = -1, 0.0
+            if _target_armature(context) is not None:
+                return bpy.ops.foxbrowser.action_assign('EXEC_DEFAULT')
+            self.report({'INFO'}, "select an armature to assign this clip")
+            return {'FINISHED'}
+        _last_action_click[0], _last_action_click[1] = self.index, now
+        return {'FINISHED'}
 
 
 class FOXB_OT_action_assign(bpy.types.Operator):
@@ -279,6 +317,10 @@ class FOXB_PT_actions(bpy.types.Panel):
         layout.template_list("FOXB_UL_actions", "", bpy.data, "actions",
                              scene, "foxb_action_index", rows=10)
 
+        hint = layout.row()
+        hint.scale_y = 0.75
+        hint.label(text="Double-click a clip to assign it", icon='INFO')
+
         armature = _target_armature(context)
         col = layout.column(align=True)
         col.enabled = armature is not None
@@ -312,6 +354,7 @@ class FOXB_PT_actions(bpy.types.Panel):
 
 classes = (
     FOXB_UL_actions,
+    FOXB_OT_action_click,
     FOXB_OT_action_assign,
     FOXB_OT_action_stash,
     FOXB_OT_action_remove,

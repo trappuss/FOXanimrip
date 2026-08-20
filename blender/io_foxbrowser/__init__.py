@@ -12,7 +12,7 @@ and rig-unit grouping from the _rig.json sidecar.
 bl_info = {
     "name": "FoxBrowser Import (MGSV / Ground Zeroes)",
     "author": "minmaxmaxminnning",
-    "version": (1, 3, 1),
+    "version": (1, 3, 15),
     "blender": (4, 2, 0),
     "location": "File > Import > FoxBrowser, and View3D > Sidebar > FoxBrowser",
     "description": "Import FoxBrowser FMDL exports and bulk animation libraries",
@@ -22,9 +22,9 @@ bl_info = {
 
 import bpy
 
-from . import actions, operators, prefs, ui
+from . import actions, browser, operators, prefs, ui
 
-_MODULES = (prefs, operators, actions, ui)
+_MODULES = (prefs, operators, actions, browser, ui)
 
 
 def register():
@@ -32,11 +32,13 @@ def register():
         for cls in module.classes:
             bpy.utils.register_class(cls)
     actions.register_props()
+    browser.register_props()
     ui.register_menus()
 
 
 def unregister():
     ui.unregister_menus()
+    browser.unregister_props()
     actions.unregister_props()
     for module in reversed(_MODULES):
         for cls in reversed(module.classes):

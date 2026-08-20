@@ -17,7 +17,6 @@
     <Product>foxanimrip</Product>
     <AssemblyTitle>foxanimrip</AssemblyTitle>
     <Description>Bulk animation export for Fox Engine games via FoxBrowser</Description>
-    <Version>1.14.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

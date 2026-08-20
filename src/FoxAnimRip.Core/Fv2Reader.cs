@@ -22,6 +22,10 @@ public sealed class Fv2Reader
 {
     public sealed record Entry(string Kind, string Line);
 
+    /// <summary>The variation's external file list, as the raw 64-bit codes the
+    /// format stores. Texture swaps and attachments refer to these by index.</summary>
+    public ulong[] ExternalFiles => _file.externalFileEntries ?? Array.Empty<ulong>();
+
     private readonly MgsvModBldr.Tools.Fv2.Fv2 _file;
 
     private Fv2Reader(MgsvModBldr.Tools.Fv2.Fv2 file) => _file = file;

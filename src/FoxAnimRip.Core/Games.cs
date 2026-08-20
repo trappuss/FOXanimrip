@@ -63,12 +63,21 @@ public sealed class GameProfile
     {
         Id = "survive",
         DisplayName = "Metal Gear Survive",
-        Executables = new[] { "MetalGearSurvive.exe", "mgsurvive.exe" },
-        FolderNames = new[] { "Metal Gear Survive", "MGSurvive" },
-        ArchiveSubdirs = new[] { "master", "" },
+        Executables = new[] { "MGSurvive.exe", "MetalGearSurvive.exe", "mgsurvive.exe" },
+        FolderNames = new[]
+        {
+            "METAL GEAR SURVIVE", "Metal Gear Survive", "MGSurvive", "MG_Survive",
+        },
+        // Survive ships its data as .dat in the game root, with a master\ tree
+        // for the layered content -- the same shape as The Phantom Pain, plus
+        // "pack" for the streamed asset packs. Whatever these miss, the
+        // recursive fallback in ArchivesIn sweeps up, so an install that puts
+        // them somewhere unexpected still works.
+        ArchiveSubdirs = new[] { "master", "pack", "" },
         Verified = false,
-        Notes = "Fox Engine, same archive containers. Not tested against a real "
-              + "install; if FoxBrowser can browse it, this can export from it.",
+        Notes = "Fox Engine, same archive containers as TPP. Character models live "
+              + "under Assets/ssd/chara. Not yet pinned against a real install -- run "
+              + "the survive audit to confirm the archive layout and mtar format.",
     };
 
     public static readonly GameProfile Custom = new()
@@ -101,6 +110,38 @@ public static class GameFinder
 {
     /// <summary>Root archive containers FoxBrowser can open.</summary>
     public static readonly string[] ArchiveExtensions = { ".dat", ".g0s", ".qar" };
+
+    /// <summary>
+    /// The <c>texture*</c> archives that <see cref="ArchivesIn"/> deliberately
+    /// skips -- huge, and holding no models or animation, so they slow the index
+    /// for nothing. But they DO hold the streamed high-resolution texture mips
+    /// (a Fox Engine .ftex keeps only the low mips inline). Reading a texture at
+    /// full resolution needs these, so the model/texture export adds them back on
+    /// top of the useful set.
+    /// </summary>
+    public static List<string> TextureArchivesIn(IEnumerable<string> usefulArchives)
+    {
+        var found = new List<string>();
+        var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var a in usefulArchives)
+        {
+            var dir = Path.GetDirectoryName(a);
+            if (dir is not null) dirs.Add(dir);
+        }
+        foreach (var dir in dirs)
+        {
+            List<string> files;
+            try { files = Directory.EnumerateFiles(dir, "texture*").ToList(); }
+            catch { continue; }
+            foreach (var f in files)
+            {
+                var ext = Path.GetExtension(f).ToLowerInvariant();
+                if (ArchiveExtensions.Contains(ext)) found.Add(f);
+            }
+        }
+        return found.Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToList();
+    }
 
     /// <summary>Texture archives are huge and hold no models or animation.</summary>
     private static bool IsUsefulArchive(string path)
@@ -182,7 +223,16 @@ public static class GameFinder
                 if (File.Exists(Path.Combine(root, exe)))
                     return profile;
         }
-        // No executable (a copied-out data folder): guess from the containers.
+        // No matching executable (a launcher variant, or a copied-out data
+        // folder): fall back to the folder name. Survive's Steam folder has no
+        // exe this recognises, so without this it read as "custom".
+        var leaf = new DirectoryInfo(root).Name;
+        foreach (var profile in GameProfile.All)
+            foreach (var folder in profile.FolderNames)
+                if (string.Equals(leaf, folder, StringComparison.OrdinalIgnoreCase))
+                    return profile;
+
+        // Still nothing named: guess from the containers.
         try
         {
             if (Directory.EnumerateFiles(root, "*.g0s").Any())

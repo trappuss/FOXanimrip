@@ -188,6 +188,39 @@ class MaterialBuilder:
                     found[code] = (b, p)
                     break
 
+        # The tool's role sidecar: when a material's textures are hash-named the
+        # spec map (never in the FBX) and a hash-named normal cannot be found by
+        # suffix, so look them up by the material's base file, which the sidecar
+        # keys on. This is what makes srm load and normals resolve on Survive
+        # gear built from shared, unresolved textures.
+        sidecar = self.es.map_sidecar()
+
+        # A hash-named base colour (an unresolved face / skin texture) carries no
+        # _bsm suffix, so classify() cannot tag it as the base and the material
+        # would import untextured -- this is why some avatar faces come in bare.
+        # But the tool recorded that texture as a base row in the sidecar. When we
+        # still have no base, adopt the material's own texture that the sidecar
+        # knows as a base: real extracted image data, just nameless. Its paired
+        # normal/spec then wire through the block below.
+        if naming.CODE_BASE not in found:
+            for cand in other_names:
+                stem = naming.parse(cand).stem or cand
+                if stem in sidecar and stem in exact_index:
+                    found[naming.CODE_BASE] = (stem, exact_index[stem])
+                    self.report.info("%s: base colour from sidecar (%s)"
+                                     % (mat.name, stem))
+                    break
+
+        base_key = found.get(naming.CODE_BASE, (base_name, None))[0]
+        if base_key and base_key in sidecar:
+            normal_stem, spec_stem = sidecar[base_key]
+            if normal_stem and not any(c in found for c in naming.NORMAL_CODES) \
+                    and normal_stem in exact_index:
+                found[naming.CODE_NORMAL] = (normal_stem, exact_index[normal_stem])
+            if spec_stem and naming.CODE_SPECROUGH not in found \
+                    and spec_stem in exact_index:
+                found[naming.CODE_SPECROUGH] = (spec_stem, exact_index[spec_stem])
+
         if self.opts.wire_extra_maps:
             for code in EXTRA_CODES:
                 if code in found:
@@ -221,7 +254,13 @@ class MaterialBuilder:
             base_name, path = found[code]
             parsed = naming.parse(base_name)
             is_normal = code in naming.NORMAL_CODES
-            image = _load_image(path, parsed.is_non_color, is_normal, self.report)
+            # Colour space follows the map's ROLE (the dict key), not the file
+            # name. A normal or spec map whose file is hash-named -- as many
+            # Survive textures are, when the source path was unresolved -- has no
+            # _nrm/_srm suffix, so parsing the name alone would load it as sRGB
+            # and wreck the normals. The code is what we actually filed it under.
+            non_color = parsed.is_non_color or code in naming.NON_COLOR_CODES or is_normal
+            image = _load_image(path, non_color, is_normal, self.report)
             if image is None:
                 continue
 

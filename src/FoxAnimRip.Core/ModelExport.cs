@@ -39,8 +39,12 @@ public static class ModelExport
     public static ModelExportResult Run(ModelContext context, string outDir,
                                         IEnumerable<string> archives, string dictDir,
                                         bool withTextures, bool withSource,
-                                        Action<string> log, CancellationToken token = default)
+                                        Action<string> log, CancellationToken token = default,
+                                        object sharedAssets = null)
     {
+        // Typed as object so callers that never pass one (the window) need no
+        // reference to FoxBrowser.Core just to see this method.
+        var sharedFox = sharedAssets as FoxAssets;
         log ??= _ => { };
         var result = new ModelExportResult();
         Directory.CreateDirectory(outDir);
@@ -55,15 +59,28 @@ public static class ModelExport
 
         if (withTextures)
         {
-            FoxAssets assets = null;
+            // Opening the archives and building their index costs more than
+            // ripping one model's textures. A batch export passes one shared
+            // FoxAssets in so the price is paid once, not per model.
+            var assets = sharedFox;
             try
             {
-                assets = FoxAssets.Open(dictDir, archives);
-                assets.BuildIndex();
+                if (assets is null)
+                {
+                    // Include the texture archives so streamed high-resolution
+                    // mips can be assembled -- the useful-archive set skips them.
+                    var withTex = archives.Concat(GameFinder.TextureArchivesIn(archives))
+                                          .Distinct(StringComparer.OrdinalIgnoreCase);
+                    assets = FoxAssets.Open(dictDir, withTex);
+                    assets.BuildIndex();
+                }
                 texSets = CollectTextures(model, assets, texDir, texDirName,
-                                          out var written, log, token);
+                                          out var written, out var maps, log, token);
                 result.Textures = written;
-                log($"textures: {written} file(s) into {texDirName}/");
+                var big = MaxDimension(texDir);
+                log($"textures: {written} file(s) into {texDirName}/"
+                    + (big > 0 ? $" (up to {big}px)" : ""));
+                WriteMapSidecar(outDir, context.Name, maps);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -71,7 +88,7 @@ public static class ModelExport
                 log($"! textures could not be extracted ({ex.Message}); "
                     + "the model will still export");
             }
-            finally { assets?.Dispose(); }
+            finally { if (assets is not null && !ReferenceEquals(assets, sharedFox)) assets.Dispose(); }
         }
 
         var scene = ExportScene.Build(model, context.Name, texSets);
@@ -121,10 +138,12 @@ public static class ModelExport
     /// </summary>
     private static Dictionary<int, ExportTexSet> CollectTextures(
         FmdlModel model, FoxAssets assets, string texDir, string texDirName,
-        out int written, Action<string> log, CancellationToken token)
+        out int written, out List<(string Base, string Normal, string Spec)> maps,
+        Action<string> log, CancellationToken token)
     {
         var sets = new Dictionary<int, ExportTexSet>();
         var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        maps = new List<(string, string, string)>();
         written = 0;
 
         foreach (var pair in model.MaterialTextures)
@@ -151,8 +170,136 @@ public static class ModelExport
             }
 
             sets[pair.Key] = new ExportTexSet(baseMap, normalMap, specMap);
+            // Record the role of each map, keyed later by the base file name, so
+            // the Blender add-on can wire the normal and spec even when a texture
+            // came out hash-named and its role is no longer readable from the
+            // file name alone.
+            if (baseMap is not null || normalMap is not null || specMap is not null)
+                maps.Add((Leaf(baseMap), Leaf(normalMap), Leaf(specMap)));
         }
         return sets;
+    }
+
+    private static string Leaf(string relative) =>
+        string.IsNullOrEmpty(relative) ? "" : relative.Replace('\\', '/').Split('/')[^1];
+
+    /// <summary>Largest texture edge just written, read straight from the DDS
+    /// headers, so a run reports whether the streamed high mips came through.</summary>
+    private static int MaxDimension(string texDir)
+    {
+        var max = 0;
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(texDir, "*.dds"))
+            {
+                try
+                {
+                    var head = new byte[20];
+                    using var fs = File.OpenRead(f);
+                    if (fs.Read(head, 0, 20) < 20) continue;
+                    if (head[0] != 'D' || head[1] != 'D' || head[2] != 'S') continue;
+                    var height = BitConverter.ToInt32(head, 12);
+                    var width = BitConverter.ToInt32(head, 16);
+                    max = Math.Max(max, Math.Max(width, height));
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return max;
+    }
+
+    /// <summary>
+    /// Write <c>&lt;name&gt;_maps.tsv</c>: base, normal and spec file names per
+    /// material, keyed by the base file. Fox Engine only wires base and normal
+    /// into the FBX, and an unresolved texture comes out hash-named, so the spec
+    /// map and a hash-named normal are otherwise unidentifiable at import. The
+    /// add-on reads this to wire them by the material's base file, which both
+    /// sides know.
+    /// </summary>
+    private static void WriteMapSidecar(string outDir, string name,
+        List<(string Base, string Normal, string Spec)> maps)
+    {
+        if (maps is null || maps.Count == 0) return;
+        try
+        {
+            var lines = new List<string> { "base\tnormal\tspec" };
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (b, n, s) in maps)
+            {
+                if (b.Length == 0 || !seen.Add(b)) continue;   // key by base file
+                lines.Add($"{b}\t{n}\t{s}");
+            }
+            if (lines.Count > 1)
+                File.WriteAllLines(Path.Combine(outDir, name + "_maps.tsv"), lines);
+        }
+        catch { /* the sidecar is an optimisation, never fatal */ }
+    }
+
+    /// <summary>
+    /// The full-resolution DDS, streamed mips and all, or null when there is no
+    /// streamed part to assemble (then the caller uses the inline DDS).
+    ///
+    /// The reliable route is <c>FtexSourceFiles</c>, which returns the .ftex and
+    /// every numbered .ftexs companion as (leaf, bytes) straight from the
+    /// archives by hash -- so it works even for a hash-named texture whose path
+    /// does not resolve, which is exactly the case that left avatar faces at
+    /// 512. Those bytes feed the assembler through an in-memory reader. The
+    /// path-based assembler is kept as a fallback.
+    /// </summary>
+    private static byte[] FullResDds(FoxAssets assets, ulong hash, string path)
+    {
+        try
+        {
+            List<(string Name, byte[] Bytes)> sources = null;
+            try
+            {
+                sources = hash != 0
+                    ? assets.FtexSourceFiles(hash)
+                    : (path.Length > 0 ? assets.FtexSourceFilesByPath(path) : null);
+            }
+            catch { sources = null; }
+
+            if (sources is { Count: > 0 })
+            {
+                var bytesByLeaf = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+                string mainLeaf = null;
+                foreach (var (name, bytes) in sources)
+                {
+                    var leaf = name.Replace('\\', '/').Split('/')[^1];
+                    bytesByLeaf[leaf] = bytes;
+                    // the .ftex is the master; .N.ftexs are the streamed mips
+                    if (leaf.EndsWith(".ftex", StringComparison.OrdinalIgnoreCase))
+                        mainLeaf ??= leaf;
+                }
+                mainLeaf ??= sources[0].Name.Replace('\\', '/').Split('/')[^1];
+
+                byte[] Read(string name)
+                {
+                    if (bytesByLeaf.TryGetValue(name, out var b)) return b;
+                    var leaf = name.Replace('\\', '/').Split('/')[^1];
+                    return bytesByLeaf.TryGetValue(leaf, out var b2) ? b2 : null;
+                }
+                var built = FoxBrowser.Imaging.FtexAssembleCore.FullDds(mainLeaf, Read);
+                if (built is { Length: > 0 }) return built;
+            }
+
+            // fallback: assemble by path out of the archives
+            var full = path.Length > 0 ? path : assets.ResolvePath(hash);
+            if (string.IsNullOrEmpty(full)) return null;
+            full = full.Replace('\\', '/');
+            var slash = full.LastIndexOf('/');
+            var dir = slash >= 0 ? full[..slash] : "";
+            var fleaf = slash >= 0 ? full[(slash + 1)..] : full;
+            byte[] ReadPath(string name)
+            {
+                try { return assets.ReadByPath(dir.Length > 0 ? dir + "/" + name : name); }
+                catch { return null; }
+            }
+            var dds = FoxBrowser.Imaging.FtexAssembleCore.FullDds(fleaf, ReadPath);
+            return dds is { Length: > 0 } ? dds : null;
+        }
+        catch { return null; }
     }
 
     /// <summary>One texture, decoded and written once however many materials use it.</summary>
@@ -167,9 +314,16 @@ public static class ModelExport
         string relative = null;
         try
         {
-            var dds = hash != 0
-                ? assets.FtexDds(hash)
-                : (path.Length > 0 ? assets.FtexDdsByPath(path) : null);
+            // Full resolution first: a Fox Engine .ftex holds only the lower
+            // mips inline, with the high-resolution mips streamed in numbered
+            // .ftexs companion files. FtexDds returns just the inline part, so
+            // Survive characters came out at 512 or less; FullDds pulls the
+            // streamed mips in through a reader over the archives. Fall back to
+            // the inline DDS when a texture has no streamed part or its path is
+            // unresolved (hash-named).
+            var dds = FullResDds(assets, hash, path)
+                      ?? (hash != 0 ? assets.FtexDds(hash)
+                          : (path.Length > 0 ? assets.FtexDdsByPath(path) : null));
 
             if (dds is not null)
             {

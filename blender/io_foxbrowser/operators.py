@@ -10,8 +10,13 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty,
                        FloatProperty, IntProperty, StringProperty)
 from bpy_extras.io_utils import ImportHelper
 
-from . import discovery, importer, materials, prefs
+from . import assembler, discovery, importer, materials, prefs
 from .prefs import NORMAL_MODE_ITEMS
+
+# Names the game treats as the created-character base body: everything else in a
+# selection is stacked onto whichever of these is present.
+BASE_STEMS = ("bsm0_main0_def", "bsf0_main0_def",
+              "skl0_main0_def", "skl0_main0_def_f")
 
 LOG_TEXT_NAME = "FoxBrowser Import Log"
 
@@ -638,10 +643,184 @@ def _target_armature(context):
     return None
 
 
+class FOXB_OT_assemble_character(FoxImportSettings, ImportHelper, bpy.types.Operator):
+    """Build one character from a base body and its parts, on a single rig.
+
+    Select a base body plus the parts to stack on it (head, arms, legs, chest,
+    armour, hats, hair). The base is detected by name -- bsm0/bsf0 for Survive,
+    skl0 for MGO -- or, if none is present, the first file is used as the base.
+    Every part's meshes are moved onto the base's skeleton, the way the game
+    assembles a created character. Ground Zeroes characters are usually one
+    complete model: select just that and it imports as-is.
+    """
+    bl_idname = "foxbrowser.assemble_character"
+    bl_label = "Assemble Character"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".fbx"
+    filter_glob: StringProperty(default="*.fbx;*.dae;*.obj", options={'HIDDEN'})
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement,
+                              options={'HIDDEN', 'SKIP_SAVE'})
+    directory: StringProperty(subtype='DIR_PATH', options={'HIDDEN', 'SKIP_SAVE'})
+
+    base_override: EnumProperty(
+        name="Base body",
+        description="Which selected file is the base the others stack onto",
+        items=lambda self, ctx: self._base_items(ctx))
+
+    def _paths(self):
+        out = []
+        if self.files:
+            for item in self.files:
+                if item.name:
+                    out.append(os.path.join(self.directory, item.name))
+        elif self.filepath:
+            out = [self.filepath]
+        return out
+
+    def _base_items(self, _ctx):
+        items = [("AUTO", "Auto-detect", "Use a bsm0/bsf0/skl0 file, else the first")]
+        for p in self._paths():
+            stem = os.path.splitext(os.path.basename(p))[0]
+            items.append((stem, stem, ""))
+        return items
+
+    def draw(self, _context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.prop(self, "base_override")
+        n = len(self._paths())
+        layout.label(text="%d file(s) selected" % n,
+                     icon='OUTLINER_OB_ARMATURE')
+
+    def execute(self, context):
+        paths = self._paths()
+        if not paths:
+            self.report({'ERROR'}, "select a base body and its parts")
+            return {'CANCELLED'}
+
+        # choose the base
+        base = None
+        if self.base_override and self.base_override != "AUTO":
+            base = next((p for p in paths
+                         if os.path.splitext(os.path.basename(p))[0] == self.base_override), None)
+        if base is None:
+            base = next((p for p in paths
+                         if os.path.splitext(os.path.basename(p))[0] in BASE_STEMS), None)
+        if base is None:
+            base = paths[0]
+        parts = [p for p in paths if p != base]
+
+        name = os.path.splitext(os.path.basename(base))[0].replace("_main0_def", "")
+        coll = bpy.data.collections.new("Character_" + name)
+        context.scene.collection.children.link(coll)
+
+        prefs.apply_defaults(self, context)
+        self.import_animation = False
+        lines = []
+        result = assembler.assemble(base, parts, report=lines.append,
+                                    link_collection=coll, settings=self)
+
+        # Parts arrive with the base-colour and normal maps the FBX references
+        # already wired by the importer. The extra Fox Engine maps (_srm/_trm)
+        # and the DXT5nm normal fix are a one-click follow-up: select the rig
+        # and use Rewire Materials if you want the full treatment.
+        text = bpy.data.texts.get(LOG_TEXT_NAME) or bpy.data.texts.new(LOG_TEXT_NAME)
+        text.clear()
+        text.write("\n".join(lines) or "Nothing to report.")
+
+        if result.armature is not None:
+            for o in context.selected_objects:
+                o.select_set(False)
+            result.armature.select_set(True)
+            context.view_layer.objects.active = result.armature
+        self.report({'INFO'},
+                    "assembled %d part(s), %d mesh(es), %d bone(s) merged"
+                    % (result.parts_loaded, len(result.meshes), result.bones_merged))
+        return {'FINISHED'}
+
+
+def _active_armature(context):
+    obj = context.object
+    if obj is not None and obj.type == 'ARMATURE':
+        return obj
+    return next((o for o in context.selected_objects if o.type == 'ARMATURE'), None)
+
+
+class FOXB_OT_add_parts(FoxImportSettings, ImportHelper, bpy.types.Operator):
+    """Stack part models onto the active character rig.
+
+    Import a base body first (Model(s)), leave its armature selected, then use
+    this to add head, arms, legs, chest, armour, hats or hair -- one file or
+    several, from any folder. Run it again to add more. Each part's meshes are
+    moved onto the active armature, the way the game assembles a character.
+    """
+    bl_idname = "foxbrowser.add_parts"
+    bl_label = "Add Part(s) to Character"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".fbx"
+    filter_glob: StringProperty(default="*.fbx;*.dae;*.obj", options={'HIDDEN'})
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement,
+                              options={'HIDDEN', 'SKIP_SAVE'})
+    directory: StringProperty(subtype='DIR_PATH', options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        return _active_armature(context) is not None
+
+    def draw(self, context):
+        layout = self.layout
+        master = _active_armature(context)
+        layout.label(text="Adding to: %s" % (master.name if master else "?"),
+                     icon='OUTLINER_OB_ARMATURE')
+        n = len([f for f in self.files if f.name]) or (1 if self.filepath else 0)
+        layout.label(text="%d part file(s)" % n, icon='FILE_3D')
+
+    def execute(self, context):
+        master = _active_armature(context)
+        if master is None:
+            self.report({'ERROR'},
+                        "select a character's armature first (import a base body)")
+            return {'CANCELLED'}
+        paths = []
+        if self.files:
+            for item in self.files:
+                if item.name:
+                    paths.append(os.path.join(self.directory, item.name))
+        elif self.filepath:
+            paths = [self.filepath]
+        if not paths:
+            self.report({'ERROR'}, "no part files chosen")
+            return {'CANCELLED'}
+
+        # keep the parts in the base's collection, wherever that is
+        prefs.apply_defaults(self, context)
+        self.import_animation = False
+        coll = master.users_collection[0] if master.users_collection else None
+        lines = []
+        result = assembler.add_parts(master, paths, report=lines.append,
+                                     link_collection=coll, settings=self)
+        text = bpy.data.texts.get(LOG_TEXT_NAME) or bpy.data.texts.new(LOG_TEXT_NAME)
+        text.clear()
+        text.write("\n".join(lines) or "Nothing to report.")
+
+        for o in context.selected_objects:
+            o.select_set(False)
+        master.select_set(True)
+        context.view_layer.objects.active = master
+        self.report({'INFO'},
+                    "added %d part(s), %d mesh(es), %d bone(s) merged"
+                    % (result.parts_loaded, len(result.meshes), result.bones_merged))
+        return {'FINISHED'}
+
+
 classes = (
     FOXB_OT_import_files,
     FOXB_OT_import_folder,
     FOXB_OT_import_recursive,
     FOXB_OT_import_animations,
     FOXB_OT_rewire_materials,
+    FOXB_OT_assemble_character,
+    FOXB_OT_add_parts,
 )

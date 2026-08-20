@@ -255,10 +255,27 @@ public static class SetSurvey
         var considered = candidates;
         if (limit > 0 && candidates.Count > limit)
         {
-            log?.Invoke($"{candidates.Count} candidates is too many to resolve rigs for; "
-                        + $"checking the first {limit}. Narrow it with --model-filter, "
-                        + "or raise the cap.");
-            considered = candidates.Take(limit).ToList();
+            // Resolving a rig means searching the archives -- minutes per model
+            // on a cold cache -- so "check the first 60" was hours of silence
+            // dressed up as a bounded answer. Over the limit, only models whose
+            // rigs are already remembered are worth checking; the rest are
+            // skipped, and skipping is said out loud rather than implied.
+            var remembered = candidates
+                .Where(c => RigCache.Load(c.Stem, fingerprint) is not null)
+                .ToList();
+            log?.Invoke($"{candidates.Count} candidates is too many to resolve rigs "
+                        + "for (each unresolved rig means searching the archives). "
+                        + $"Checking the {remembered.Count} already remembered; "
+                        + "narrow the rest with --model-filter.");
+            if (remembered.Count == 0)
+            {
+                log?.Invoke("none are remembered yet -- run with --model-filter "
+                            + "(for the player, --model-filter skl0) so only the "
+                            + "models you mean get resolved.");
+                return fits;
+            }
+            considered = remembered.Count > limit
+                ? remembered.Take(limit).ToList() : remembered;
         }
 
         for (var i = 0; i < considered.Count; i++)
