@@ -32,6 +32,7 @@ Counts come from a full pass over three installs: **576,760** files in TPP,
 | [Characters and Customization](Characters-and-Customization) | Character asset layout, the MGO avatar part system, FOVA form variation, Survive's differences |
 | [Toolchain and Methods](Toolchain-and-Methods) | How to extract and verify all of this, including the invariants that catch a wrong result |
 | [Open Questions](Open-Questions) | What is still unknown, and the specific next experiment for each |
+| [Prior Art and Tools](Prior-Art-and-Tools) | The other projects that have opened these files, what each one knows, and which to reach for |
 
 ## Orientation: the three games
 
@@ -52,4 +53,6 @@ is why a TPP clip drives a Survive character correctly.
 
 *Compiled from the foxanimrip project. The tooling that produced every number
 here is in the repository; see [Toolchain and Methods](Toolchain-and-Methods)
-to reproduce any of it.*
+to reproduce any of it. Work by others — FoxBrowser, FoxKit-3, mctrollin's MTAR
+tools, mgsv-lookup-strings and Fox_Parser — is credited where it is used and
+collected in [Prior Art and Tools](Prior-Art-and-Tools).*

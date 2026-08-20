@@ -3,6 +3,12 @@
 What is still unknown, and the specific next experiment for each. Ordered by how
 much would be gained.
 
+> **Before starting on any of these**, check
+> [Prior Art and Tools](Prior-Art-and-Tools). Fox_Parser reaches `.fsop` and
+> `.fv2`; FoxKit-3 covers animation playback in depth; mgsv-lookup-strings is
+> the name-recovery corpus. Several questions below may already be answered
+> there.
+
 ## 1. Where is the motion graph? **[open]**
 
 **What we know.** The asset tree is real: 989 dictionary paths under
@@ -18,6 +24,11 @@ archives for a hit. A single match names the real extension and opens the whole
 system. If nothing matches, extend the sweep to all 8,192 possible 13-bit codes
 — it is only 989 × 8,192 hash lookups.
 
+**Nobody else appears to have it either.** None of the surveyed projects
+(FoxKit-3, mctrollin's MTAR tools, Fox_Parser, FoxBrowser) handles a motion
+graph format, which is consistent with it being genuinely unlocated rather than
+simply unknown to us.
+
 **If it is found,** the payoff is large: blend durations, transition conditions,
 and the parametric travel rule — the three things the clip inventory cannot
 tell you.
@@ -32,9 +43,11 @@ definitions), neither of which was decoded here.
 ## 3. Shader and material formats **[open]**
 
 `.fsop` (`TppShaders_dx11.fsop`, `GrModelShaders_dx11.fsop`) and `.fmtt`
-(`material_params.fmtt`, four per game) are untouched. Decoding them would give
-exact material reconstruction rather than the physically-plausible approximation
-current tools produce.
+(`material_params.fmtt`, four per game) are untouched *here* — but Fox_Parser
+lists `.fsop` among its supported formats with a test suite, so start there
+rather than from scratch. Decoding them would give exact material
+reconstruction rather than the physically-plausible approximation current tools
+produce.
 
 ## 4. Simulation parameters **[open]**
 
@@ -56,14 +69,18 @@ GZ's extension codes are small and near-sequential (`104` = `.ftex`, `192`–`20
 index rather than a hashed extension string, but the table itself was not
 located. Anyone working seriously with GZ should establish it properly.
 
-## 7. Dictionary coverage **[open]**
+## 7. Dictionary coverage **[partly answered]**
 
-Roughly a third of textures resolve to no name. Those files extract perfectly
+Roughly a third of textures resolve to no name *with the dictionary we used*.
+kapuragu's mgsv-lookup-strings is a larger validated corpus and should be tried
+first — our coverage figure describes FoxBrowser's bundled dictionary, not the
+limit of what has been recovered. Those files extract perfectly
 but are anonymous. We tested whether hash-named avatar textures could be
 recovered by brute-forcing plausible names against the hash — 42,529 candidates
 generated from the observed naming conventions, **zero matches**. The names do
-not follow the conventions we could infer, so recovering them needs either a
-larger real-path corpus or strings from the executable.
+not follow the conventions we could infer, so recovering them needs a larger
+real-path corpus or strings pulled from the executable — which is precisely what
+mgsv-lookup-strings assembles.
 
 ## 8. The `--all-sets` anchor defect **[known bug, unfixed]**
 
@@ -73,7 +90,14 @@ sets bind to a 15-bone stand-in. Full description in
 not in the game data, and the fix is well understood — rank by matched-bone
 count and re-rip.
 
-## 9. Facial and additive layers **[open]**
+## 9. GANI track types we did not exercise **[open]**
+
+mctrollin's MTAR tools note that not all track types are supported there —
+animal legs are called out — and that twist-bone reconstruction is absent. Since
+that project reads and writes real MTARs, its unsupported list is a good map of
+where the format's remaining corners are.
+
+## 10. Facial and additive layers **[open]**
 
 Every character has facial sets (`player2_*_facial`, `TppMaleFacial`) and the
 `_layers` naming implies an additive layering scheme over base locomotion.

@@ -35,17 +35,119 @@ the same rig, so it drives the same models.
 A GANI holds per-track keyframes addressed by **bone name hash**, not by index —
 which is what allows one clip to drive several different skeletons. Resolution
 is: hash the model's bone names, match against the clip's track hashes, and
-count how many landed. That count is the binding quality (see below).
+count how many landed. That count is the binding quality (see §4).
+
+### Two versions
+
+There are two GANI formats, distinguished by their header, and a reader must
+detect which it has:
+
+| | where it is used |
+|---|---|
+| **GANI1** | Ground Zeroes, and some Phantom Pain cases — facial animation in particular |
+| **GANI2** | the newer format: improved framing and track sectioning |
+
+GANI2 adds a **Layout Track** placed in the *negative* frame range, carrying
+properties about the clip rather than motion. A reader that assumes frames
+start at zero will either miss it or misinterpret it as motion.
+
+*(Version distinction and layout-track behaviour from mctrollin's MTAR tools —
+see [Prior Art and Tools](Prior-Art-and-Tools).)*
+
+### A clip carries more than bone curves
+
+Alongside the animation tracks, a clip can hold:
+
+- **Motion events** — timed markers the game reacts to (footfalls, sounds,
+  gameplay hooks).
+- **Motion points** — positional data referenced during playback.
+- **Shader parameters** — animated material values (GANI1).
+- **Root motion** — see §5.
+
+Exporters that only extract bone curves silently drop all of this. It is
+usually the missing piece when a re-implementation looks right but does not
+*feel* right, because the events that drove sound and gameplay are gone.
 
 **Frame rate is 59.94 fps.** Every measured clip in all three games is authored
 at 59.94, not 60 — the NTSC rate. Play a clip at 60 and it drifts by one frame
 every 16.7 seconds, which is enough to break a loop's phase over time. In
 Blender that means `fps = 60, fps_base = 1.001`.
 
-Clip lengths in the player set run from ~15 frames (a snap transition) to 540
-(a long context idle).
+This is confirmed from two independent directions: measured across every clip
+we bulk-exported, and stated in FoxKit's playback code as
 
-## 3. Binding a clip to a model
+```csharp
+PlaybackRate = 1.0f / (float)(60.0 * 1000.0 / 1001.0)
+```
+
+which is exactly 60000/1001 = 59.9400599… Clip lengths in the player set run
+from ~15 frames (a snap transition) to 540 (a long context idle).
+
+## 3. Inside a track: how keyframes are stored
+
+Fox does not store plain float curves. Track data is **bit-packed at a
+per-track precision**, which is why a naive parser produces either garbage or
+nothing at all.
+
+The following is the structure as implemented in FoxKit-3's `TrackData.cs`
+(see [Prior Art and Tools](Prior-Art-and-Tools)) — the most precise public
+account of the format:
+
+**Track header**
+
+```csharp
+struct TrackData {
+    int   DataOffset;                    // where this track's packed data begins
+    short SegmentId;
+    byte  Packed_Type_NextEntryOffset;   // 4 bits segment type | 4 bits next-entry offset
+    byte  ComponentBitSize;              // bits per component - per track, not global
+}
+
+struct TrackMiniData {
+    uint Packed_ComponentBitSize_DataOffset;  // 8 bits size | 24 bits offset
+}
+```
+
+The compact `TrackMiniData` variant exists because most tracks need far less
+than a full header; a reader must handle both.
+
+**Segment types**
+
+```csharp
+enum SegmentType {
+    Quat = 0, Float = 1, Vector2 = 2, Vector3 = 3,
+    Vector4 = 4, QuatDiff = 5, VectorDiff = 6
+}
+```
+
+The `*Diff` variants store deltas rather than absolute values — cheaper for
+tracks that change slowly, and a source of drift if a reader applies them as
+absolutes.
+
+**Reading the bits.** Values are not byte-aligned. A component is extracted by
+converting a bit position to a `ushort` position, masking the bits out of the
+lower and upper shorts, and recombining them. `ComponentBitSize` varies per
+track, so the bit cursor advances by different amounts in different tracks.
+
+**Rotations.** Quaternions use a smallest-component style encoding: X, Y and Z
+are quantised at the track's bit size with the remaining component reconstructed
+from the constraint `Z = 1.0 - X - Y`, alongside separate sign bits and a
+half-angle term scaled into `[0, π/2]`. Reconstructing this wrongly gives poses
+that look *nearly* right — subtly twisted joints — rather than obviously broken,
+which makes it hard to notice without the checks in
+[Toolchain and Methods](Toolchain-and-Methods).
+
+**Positions.** `Vector3` appears in two forms: full 32-bit floats, or three
+half-precision `ushort` values decoded by pulling sign, exponent and mantissa
+apart and recasting to IEEE 754.
+
+The practical consequence: **precision is a per-track property of the file**.
+Two clips on the same skeleton can store the same bone at different accuracy,
+so a round trip through a tool that re-quantises will degrade data. mctrollin's
+tools warn about exactly this — "repeated imports and exports of the same data
+can degrade it."
+
+## 4. Binding a clip to a model
 
 The pipeline, in order:
 
@@ -77,7 +179,7 @@ never take the first over a threshold. This exact bug put 209 TPP animation
 sets — the player's included — onto a 15-bone stand-in whose exports drive six
 bones and animate no legs.
 
-## 4. Root motion is optional, and usually absent
+## 5. Root motion is optional, and usually absent
 
 Fox's own export path bakes clips **in place** — the root's translation is
 discarded. That is the right default for building an animation library (a walk
@@ -89,7 +191,7 @@ locomotion clips travel almost nothing, because they are authored in place by
 design — see [Locomotion Deep Dive](Locomotion-Deep-Dive), which is entirely
 about recovering the speed anyway.
 
-## 5. Clip naming grammar
+## 6. Clip naming grammar
 
 Movement clips are named systematically, and the grammar is the most valuable
 undocumented thing in the animation data:
@@ -127,7 +229,7 @@ Two corrections we had to make while reading it:
 - Loops are `_lp_`, and a filter matching the words `run`/`dash` rather than the
   tokens `_rn_`/`_dh_` **silently misses the most important clips in the game**.
 
-## 6. Other animation-adjacent formats
+## 7. Other animation-adjacent formats
 
 | ext | code | what |
 |-----|------|------|

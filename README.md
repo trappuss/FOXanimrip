@@ -40,6 +40,7 @@ rediscover it:
 | [Characters and Customization](../../wiki/Characters-and-Customization) | Asset layout, the MGO avatar part system, FOVA variation, Survive |
 | [Toolchain and Methods](../../wiki/Toolchain-and-Methods) | How to extract and *verify* all of it |
 | [Open Questions](../../wiki/Open-Questions) | What is still unknown, and the next experiment for each |
+| [Prior Art and Tools](../../wiki/Prior-Art-and-Tools) | The other projects that have opened these files, and which to reach for |
 
 Every claim in the handbook is measured from shipped files and says how it was
 established. A short version of the movement findings is in
@@ -236,6 +237,13 @@ motion graph.
 [LICENSE](LICENSE). The Blender add-on is **GPL-3.0-or-later**, because Blender
 add-ons link against Blender's GPL Python API — see
 [blender/io_foxbrowser/LICENSE](blender/io_foxbrowser/LICENSE).
+
+This handbook also draws on work by others — **FoxKit-3** (Joey35233) for the
+animation track format, **fox_engine_mtar_tools_blender** (mctrollin) for MTAR
+round-tripping and the GANI1/GANI2 split, **mgsv-lookup-strings** (kapuragu) for
+hash dictionaries, and **Fox_Parser** (Frostyman758) for broad format coverage.
+Each is credited where it is used and collected in
+[Prior Art and Tools](../../wiki/Prior-Art-and-Tools).
 
 **FoxBrowser** is the work of its author and is not included, modified or
 redistributed here; this tool reads the copy on your own machine. All the hard

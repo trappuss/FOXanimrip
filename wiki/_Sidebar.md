@@ -8,3 +8,4 @@
 - [Characters and Customization](Characters-and-Customization)
 - [Toolchain and Methods](Toolchain-and-Methods)
 - [Open Questions](Open-Questions)
+- [Prior Art and Tools](Prior-Art-and-Tools)

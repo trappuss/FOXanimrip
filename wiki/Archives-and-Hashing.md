@@ -134,6 +134,19 @@ Name recovery uses community-built dictionaries, shipped with FoxBrowser:
 | `fpk_dictionary.txt` | 2,062 | FPK-internal names |
 | `bone_dictionary.txt` | 561 | skeleton bone names |
 
+**A fuller corpus exists.** kapuragu's **mgsv-lookup-strings** collects
+validated dictionaries organised by tool and by `<file type>\<data type>\<game>`,
+plus raw strings scraped from the executables, with additions validated through
+Hashwrangler. If a third of your textures are coming out hash-named, that is
+where to look before concluding a name is unrecoverable — see
+[Prior Art and Tools](Prior-Art-and-Tools).
+
+Note also that not every hash in Fox is a *path* hash. **StrCode32** and
+**StrCode64** hash strings *inside* files — bone names, parameter and node names
+— and a dictionary only works against the hash type it was built for. The bone
+dictionary resolves StrCode names; `qar_dictionary.txt` resolves
+PathFileNameCodes. Mixing them yields nothing and looks like data corruption.
+
 These are *lists of candidate paths*, hashed and matched against what the
 archives contain. Two consequences:
 

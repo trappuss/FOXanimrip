@@ -3,6 +3,47 @@
 All notable changes to this project are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.24.0] - 2026-08-20
+
+Handbook update: the wiki now builds on the other public Fox Engine work
+instead of stopping where our own measurements stopped.
+
+### Added
+
+- **Prior Art and Tools** wiki page — what each existing project knows and
+  which to reach for: FoxBrowser (the decoder this tool drives), **FoxKit-3**
+  (Joey35233), **fox_engine_mtar_tools_blender** (mctrollin),
+  **mgsv-lookup-strings** (kapuragu) and **Fox_Parser** (Frostyman758). Also
+  disambiguates PathFileNameCode from StrCode32/64, which is a recurring source
+  of wasted effort.
+- **The GANI track format, documented** (Animation System §3), from FoxKit-3's
+  `TrackData.cs`: the `TrackData`/`TrackMiniData` headers, the `SegmentType`
+  enum (`Quat, Float, Vector2, Vector3, Vector4, QuatDiff, VectorDiff`),
+  per-track `ComponentBitSize` with unaligned bit reading, the quaternion
+  encoding and half-precision decode. Explains why precision is a per-track
+  property of the file, and why round-tripping degrades data.
+- **GANI1 vs GANI2** (Animation System §2), from mctrollin's MTAR tools: GANI1
+  in Ground Zeroes and TPP facial animation, GANI2 newer with improved framing
+  and track sectioning plus a **Layout Track in the negative frame range**. Also
+  that clips carry motion events, motion points and shader parameters — data a
+  bone-curve-only exporter silently drops.
+- **Independent confirmation of 59.94 fps**: FoxKit's
+  `PlaybackRate = 1/(60000/1001)` matches the rate measured across every clip.
+
+### Changed
+
+- **Dictionary coverage is no longer stated as a hard limit.** The "roughly a
+  third of textures resolve to no name" figure describes FoxBrowser's bundled
+  dictionary; mgsv-lookup-strings is a larger validated corpus and is now the
+  recommended first stop. Open question 7 downgraded to *partly answered*.
+- Open Questions notes that none of the surveyed projects handles a motion
+  graph format either — evidence that it is genuinely unlocated, not merely
+  unknown to us — and points shader/material work at Fox_Parser, which already
+  reaches `.fsop`.
+- New open question: the GANI track types mctrollin's tools do not support
+  (animal legs, twist-bone reconstruction) map where the format's remaining
+  corners are.
+
 ## [1.23.0] - 2026-08-20
 
 Documentation release. The tooling is unchanged; what changed is that the
